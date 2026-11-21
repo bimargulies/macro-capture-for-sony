@@ -297,6 +297,40 @@ public:
     return YES;
 }
 
+- (NSArray<NSNumber *> *)magnifierRatios {
+    NSMutableArray<NSNumber *> *out = [NSMutableArray array];
+    if (!_dev || !_connected) return out;
+    SCRSDK::CrDeviceProperty p;
+    if (![self getProperty:SCRSDK::CrDeviceProperty_Focus_Magnifier_Setting into:p]) return out;
+    size_t width = 8;
+    switch (p.GetValueType() & 0x00FF) {
+        case 0x01: case 0x11: width = 1; break;
+        case 0x02: case 0x12: width = 2; break;
+        case 0x03: case 0x13: width = 4; break;
+        default: width = 8; break;
+    }
+    const CrInt8u *data = p.GetSetValues();
+    CrInt32u bytes = p.GetSetValueSize();
+    for (size_t i = 0; data && i + width <= bytes; i += width) {
+        uint64_t v = 0;
+        memcpy(&v, data + i, width);
+        uint32_t ratio = (uint32_t)(v >> 32);
+        if (ratio > 10 && ![out containsObject:@(ratio)]) [out addObject:@(ratio)];
+    }
+    [out sortUsingSelector:@selector(compare:)];
+    return out;
+}
+
+- (BOOL)setMagnifierRatio:(uint32_t)ratio x:(int)x y:(int)y error:(NSError **)outError {
+    if (!_dev || !_connected) { if (outError) *outError = MakeError(@"Camera not connected"); return NO; }
+    x = std::max(0, std::min(639, x));
+    y = std::max(0, std::min(479, y));
+    uint64_t v = ((uint64_t)ratio << 32) | ((uint64_t)x << 16) | (uint64_t)y;
+    SCRSDK::CrError e = [self setProperty:SCRSDK::CrDeviceProperty_Focus_Magnifier_Setting value:v];
+    if (e) { if (outError) *outError = MakeError([NSString stringWithFormat:@"Magnifier command failed (0x%x)", e]); return NO; }
+    return YES;
+}
+
 - (BOOL)fullPressWithError:(NSError **)outError {
     if (!_dev || !_connected) { if (outError) *outError = MakeError(@"Camera not connected"); return NO; }
     SCRSDK::CrError e = SCRSDK::SendCommand(_dev, SCRSDK::CrCommandId_Release, SCRSDK::CrCommandParam_Down);

@@ -49,6 +49,14 @@ typedef NS_ENUM(NSInteger, CameraBridgeState) {
 /// Full press (S2 down, then up). The photo is transferred to the save folder afterwards.
 - (BOOL)fullPressWithError:(NSError * _Nullable * _Nullable)error;
 
+/// The magnifier ratio codes the camera accepts, ascending, tenths of a power (47 = x4.7).
+/// Excludes "off" and x1.0 (which looks the same as off). Empty if unsupported.
+- (NSArray<NSNumber *> *)magnifierRatios;
+
+/// Sets the focus magnifier. `ratio` 0 turns it off. `x`,`y` are the centre in the camera's
+/// 640x480 coordinate space (0,0 top-left). Takes effect in the live view within a moment.
+- (BOOL)setMagnifierRatio:(uint32_t)ratio x:(int)x y:(int)y error:(NSError * _Nullable * _Nullable)error;
+
 /// Set after connecting if the shim had to change the camera's setting so photos reach the Mac
 /// (e.g. it was saving to the memory card only). Nil if nothing was changed.
 @property (nonatomic, readonly, nullable) NSString *transferNote;

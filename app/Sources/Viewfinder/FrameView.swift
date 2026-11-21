@@ -30,6 +30,60 @@ final class FrameView: NSView {
         didSet { quarterTurns = ((quarterTurns % 4) + 4) % 4; needsLayout = true }
     }
 
+    // MARK: Mouse: pick the magnifier position
+
+    /// Click (no drag) at a point of the full picture, as fractions 0...1 of the unrotated image.
+    var onClick: ((CGPoint) -> Void)?
+    /// Drag while magnified: movement as a fraction of the picture's width/height (unrotated image axes).
+    var onDrag: ((CGSize) -> Void)?
+    var onDoubleClick: (() -> Void)?
+    private var imageSize = CGSize(width: 4, height: 3)
+    private var dragStart: NSPoint?
+    private var lastDrag: NSPoint?
+    private var dragged = false
+
+    override var acceptsFirstResponder: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// View vector -> image-axis fractions of the displayed (aspect-fit, rotated) picture.
+    private func imageFraction(ofViewVector v: CGVector) -> CGSize {
+        // Undo the display rotation (clockwise turns): rotate counter-clockwise by the same angle.
+        let a = CGFloat(quarterTurns) * .pi / 2
+        let lx = v.dx * cos(a) - v.dy * sin(a)
+        let ly = v.dx * sin(a) + v.dy * cos(a)
+        let odd = quarterTurns % 2 == 1
+        let lw = odd ? bounds.height : bounds.width, lh = odd ? bounds.width : bounds.height
+        let s = min(lw / imageSize.width, lh / imageSize.height)
+        return CGSize(width: lx / (imageSize.width * s), height: -ly / (imageSize.height * s))  // image y grows downward
+    }
+
+    private func imagePoint(_ p: NSPoint) -> CGPoint {
+        let f = imageFraction(ofViewVector: CGVector(dx: p.x - bounds.midX, dy: p.y - bounds.midY))
+        return CGPoint(x: min(max(f.width + 0.5, 0), 1), y: min(max(f.height + 0.5, 0), 1))
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        if event.clickCount == 2 { onDoubleClick?(); dragStart = nil; return }
+        dragStart = p; lastDrag = p; dragged = false
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let start = dragStart, let last = lastDrag else { return }
+        let p = convert(event.locationInWindow, from: nil)
+        if !dragged && hypot(p.x - start.x, p.y - start.y) < 4 { return }
+        dragged = true
+        let f = imageFraction(ofViewVector: CGVector(dx: p.x - last.x, dy: p.y - last.y))
+        lastDrag = p
+        onDrag?(f)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        defer { dragStart = nil; lastDrag = nil }
+        guard let start = dragStart, !dragged else { return }
+        onClick?(imagePoint(start))
+    }
+
     override func layout() {
         super.layout()
         let b = bounds
@@ -56,6 +110,12 @@ final class FrameView: NSView {
         if schedule { DispatchQueue.main.async { [weak self] in self?.drain() } }
     }
 
+    /// Remember the full (un-magnified) picture's shape for click mapping.
+    var magnified = false
+    private func lastFullSize(_ img: CGImage) {
+        if !magnified { imageSize = CGSize(width: img.width, height: img.height) }
+    }
+
     private func drain() {
         lock.lock()
         let frame = pending
@@ -76,6 +136,7 @@ final class FrameView: NSView {
         CATransaction.commit()
 
         let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+        if img.width > 0 { lastFullSize(img) }
         onDisplayed?(Double(now &- frame.arrival) / 1e6, Double(t1 - t0) / 1e6, CGSize(width: img.width, height: img.height))
     }
 }

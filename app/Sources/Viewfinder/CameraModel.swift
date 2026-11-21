@@ -26,6 +26,17 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
     @Published var errorMessage: String?
     @Published var lastDelivered: URL?
 
+    // Focus magnifier. Ratio 0 = off, else tenths of a power (47 = x4.7).
+    @Published var magnifierRatios: [UInt32] = []
+    @Published var magnifierRatio: UInt32 = 0
+    /// Ratio used when a click turns the magnifier on; the last one chosen.
+    private(set) var preferredRatio: UInt32 = 0
+    /// Magnifier centre as a fraction of the unrotated full picture (0...1, origin top-left).
+    private(set) var magnifierCenter = CGPoint(x: 0.5, y: 0.5)
+    private let magQueue = DispatchQueue(label: "camera.magnifier")
+    private let magLock = NSLock()
+    private var magWanted: (ratio: UInt32, x: Int, y: Int)?
+
     let settings: AppSettings
     let frameView = FrameView(frame: .zero)
     private let bridge = CameraBridge()
@@ -73,6 +84,20 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
         super.init()
         lastCameraTime = settings.lastCameraTime
         bridge.delegate = self
+        frameView.onClick = { [weak self] p in
+            guard let self, self.magnifierRatio == 0 else { return }
+            let r = self.preferredRatio != 0 ? self.preferredRatio : (self.magnifierRatios.first ?? 0)
+            if r != 0 { self.setMagnifier(ratio: r, center: p) }
+        }
+        frameView.onDoubleClick = { [weak self] in self?.setMagnifier(ratio: 0) }
+        frameView.onDrag = { [weak self] d in
+            guard let self, self.magnifierRatio != 0 else { return }
+            // Dragging moves the picture with the pointer, so the window moves the other way,
+            // by 1/zoom as much of the full picture.
+            let z = CGFloat(self.magnifierRatio) / 10
+            self.setMagnifier(ratio: self.magnifierRatio,
+                              center: CGPoint(x: self.magnifierCenter.x - d.width / z, y: self.magnifierCenter.y - d.height / z))
+        }
         frameView.onDisplayed = { [weak self] latency, decode, size in self?.record(latency, decode, size) }
         try? FileManager.default.createDirectory(at: AppFolders.staging, withIntermediateDirectories: true)
         purgeOldExploringFiles()
@@ -108,15 +133,60 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
         DispatchQueue.main.async {
             self.status = message
             self.state = newState
-            if newState != .connected { self.statsLine = ""; self.halfPressed = false }
+            if newState != .connected { self.statsLine = ""; self.halfPressed = false; self.magnifierRatio = 0 }
         }
     }
 
     /// Must run before the process exits so the camera releases its session.
     func shutdown() {
         wantConnected = false
+        if magnifierRatio != 0 { magQueue.sync { try? self.bridge.setMagnifierRatio(0, x: 320, y: 240) } }
         ctl.sync { self.bridge.disconnect(); self.bridge.releaseSDK() }
         printSummary()
+    }
+
+    // MARK: Magnifier
+
+    /// Magnifies at `center` (fractions of the full picture), or turns the magnifier off with ratio 0.
+    /// Commands are coalesced: while the camera is busy only the newest request is kept.
+    func setMagnifier(ratio: UInt32, center: CGPoint? = nil) {
+        guard state == .connected else { return }
+        if let center {
+            magnifierCenter = CGPoint(x: min(max(center.x, 0), 1), y: min(max(center.y, 0), 1))
+        }
+        if ratio != 0 { preferredRatio = ratio }
+        magnifierRatio = ratio
+        frameView.magnified = ratio != 0
+        let x = Int((magnifierCenter.x * 639).rounded()), y = Int((magnifierCenter.y * 479).rounded())
+        magLock.lock()
+        let idle = magWanted == nil
+        magWanted = (ratio, x, y)
+        magLock.unlock()
+        if idle { magQueue.async { self.drainMagnifier() } }
+    }
+
+    private func drainMagnifier() {
+        while true {
+            magLock.lock()
+            let want = magWanted
+            magWanted = nil
+            magLock.unlock()
+            guard let want else { return }
+            do { try bridge.setMagnifierRatio(want.ratio, x: Int32(want.x), y: Int32(want.y)) }
+            catch { DispatchQueue.main.async { self.lastMessage = "Magnifier: \(error.localizedDescription)" } }
+        }
+    }
+
+    /// Turn the ratio list and state over after (re)connecting; the camera starts un-magnified.
+    private func refreshMagnifier() {
+        magQueue.async {
+            let ratios = self.bridge.magnifierRatios().map { $0.uint32Value }
+            DispatchQueue.main.async {
+                self.magnifierRatios = ratios
+                self.magnifierRatio = 0
+                if !ratios.contains(self.preferredRatio) { self.preferredRatio = ratios.first ?? 0 }
+            }
+        }
     }
 
     // MARK: Shutter
@@ -252,6 +322,7 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
         setStatus(text, newState)
         if newState == .connected {
             ctl.async { try? bridge.setSaveFolder(AppFolders.staging.path) }  // reapply after an SDK reconnect
+            refreshMagnifier()
             if let note = bridge.transferNote { DispatchQueue.main.async { self.lastMessage = note } }
         }
         if newState == .disconnected {

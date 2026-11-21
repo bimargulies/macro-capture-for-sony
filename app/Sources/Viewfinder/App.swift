@@ -86,6 +86,17 @@ struct ControlsView: View {
                 Button { settings.rotation = (settings.rotation + 1) % 4 } label: { Image(systemName: "rotate.right") }
                     .keyboardShortcut("]", modifiers: .command)
                     .help("Rotate the viewfinder image clockwise (⌘]). Display only.")
+                Picker("Magnifier", selection: Binding(get: { model.magnifierRatio },
+                                                       set: { model.setMagnifier(ratio: $0) })) {
+                    Text("Off").tag(UInt32(0))
+                    ForEach(model.magnifierRatios, id: \.self) { Text("×" + String(format: "%.1f", Double($0) / 10)).tag($0) }
+                }
+                .pickerStyle(.segmented).frame(width: 190).labelsHidden()
+                .disabled(!connected || model.magnifierRatios.isEmpty)
+                .help("Focus magnifier. With it off, click the picture to magnify there; drag to move; double-click or Esc to turn off.")
+                Button("") { model.setMagnifier(ratio: 0) }
+                    .keyboardShortcut(.escape, modifiers: [])
+                    .frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
                 Button(model.stackOpen ? "Stop stack" : "Start stack") { model.toggleStack() }
                     .disabled(!connected || settings.mode != .capture)
                     .help("Writes a black marker photo into the destination folder. Press again to close the stack.")
