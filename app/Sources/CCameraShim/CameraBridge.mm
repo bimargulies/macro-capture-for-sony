@@ -47,6 +47,7 @@ static uint64_t Fnv1a(const unsigned char *p, size_t n) {
 - (void)sdkDisconnected:(unsigned)error;
 - (void)sdkError:(unsigned)error;
 - (void)sdkWarning:(unsigned)warning;
+- (void)sdkDownloaded:(NSString *)path;
 @end
 
 namespace {
@@ -56,6 +57,10 @@ public:
     void OnConnected(SCRSDK::DeviceConnectionVersioin) override { WallLog("SDK OnConnected"); [owner sdkConnected]; }
     void OnDisconnected(CrInt32u e) override { WallLog("SDK OnDisconnected error=0x%x", e); [owner sdkDisconnected:e]; }
     void OnError(CrInt32u e) override { WallLog("SDK OnError 0x%x", e); [owner sdkError:e]; }
+    void OnCompleteDownload(CrChar *filename, CrInt32u) override {
+        WallLog("SDK OnCompleteDownload %s", filename);
+        [owner sdkDownloaded:[NSString stringWithUTF8String:(const char *)filename]];
+    }
     void OnWarning(CrInt32u w) override {
         WallLog("SDK OnWarning 0x%x%s", w, w == SCRSDK::CrWarning_Connect_Reconnecting ? " (Reconnecting)" : w == SCRSDK::CrWarning_Connect_Reconnected ? " (Reconnected)" : "");
         [owner sdkWarning:w];
@@ -75,6 +80,7 @@ public:
     std::mutex _mu;
     std::promise<void> *_promise;
     NSString *_model;
+    NSString *_transferNote;
 }
 
 - (instancetype)init {
@@ -89,6 +95,7 @@ public:
 - (void)dealloc { [self disconnect]; }
 
 - (NSString *)modelName { return _model; }
+- (NSString *)transferNote { return _transferNote; }
 - (BOOL)isConnected { return _connected; }
 
 #pragma mark SDK callbacks
@@ -107,7 +114,15 @@ public:
     [self.delegate cameraBridge:self didChangeState:CameraBridgeStateConnected message:@"Connected"];
 }
 
+- (void)sdkDownloaded:(NSString *)path {
+    [self.delegate cameraBridge:self didDownloadFile:path];
+}
+
 - (void)sdkWarning:(unsigned)warning {
+    if (warning == SCRSDK::CrNotify_Captured_Event) {
+        [self.delegate cameraBridgeDidCapture:self];
+        return;
+    }
     if (warning == SCRSDK::CrWarning_Connect_Reconnecting)
         [self.delegate cameraBridge:self didChangeState:CameraBridgeStateReconnecting message:@"Camera not responding; reconnecting…"];
     else if (warning == SCRSDK::CrWarning_Connect_Reconnected)
@@ -190,6 +205,7 @@ public:
 
     std::this_thread::sleep_for(std::chrono::seconds(1)); // the SDK sample waits 1s after connect
 
+    [self ensurePCTransfer];
     TLOG("settle done, starting poller");
     _stop = false;
     __weak CameraBridge *weakSelf = self;
@@ -228,6 +244,66 @@ public:
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(3));
     }
+}
+
+#pragma mark Shooting
+
+- (BOOL)getProperty:(CrInt32u)code into:(SCRSDK::CrDeviceProperty &)out {
+    CrInt32u c = code;
+    CrInt32 n = 0;
+    SCRSDK::CrDeviceProperty *list = nullptr;
+    SCRSDK::CrError err = SCRSDK::GetSelectDeviceProperties(_dev, 1, &c, &list, &n);
+    BOOL ok = !err && list && n >= 1;
+    if (ok) out = list[0];
+    if (list) SCRSDK::ReleaseDeviceProperties(_dev, list);
+    return ok;
+}
+
+- (SCRSDK::CrError)setProperty:(CrInt32u)code value:(uint64_t)value {
+    SCRSDK::CrDeviceProperty p;
+    if (![self getProperty:code into:p]) return SCRSDK::CrError_Generic_Unknown;
+    p.SetCurrentValue(value);
+    return SCRSDK::SetDeviceProperty(_dev, &p);
+}
+
+/// Photos only reach the Mac if the camera's save destination includes the host PC.
+- (void)ensurePCTransfer {
+    _transferNote = nil;
+    SCRSDK::CrDeviceProperty p;
+    if (![self getProperty:SCRSDK::CrDeviceProperty_StillImageStoreDestination into:p]) return;
+    uint64_t cur = p.GetCurrentValue();
+    WallLog("StillImageStoreDestination = 0x%llx", (unsigned long long)cur);
+    if (cur == SCRSDK::CrStillImageStoreDestination_MemoryCard) {
+        SCRSDK::CrError e = [self setProperty:SCRSDK::CrDeviceProperty_StillImageStoreDestination
+                                        value:SCRSDK::CrStillImageStoreDestination_HostPCAndMemoryCard];
+        _transferNote = e ? [NSString stringWithFormat:@"Camera saves to the card only and could not be switched (0x%x); photos will not reach this Mac.", e]
+                          : @"Camera was saving to the card only; switched it to Mac and card.";
+        WallLog("%s", _transferNote.UTF8String);
+    }
+}
+
+- (BOOL)setSaveFolder:(NSString *)path error:(NSError **)outError {
+    if (!_dev) { if (outError) *outError = MakeError(@"not connected"); return NO; }
+    SCRSDK::CrError e = SCRSDK::SetSaveInfo(_dev, (CrChar *)path.UTF8String, (CrChar *)"SHOT", -1);
+    if (e) { if (outError) *outError = MakeError([NSString stringWithFormat:@"SetSaveInfo failed (0x%x)", e]); return NO; }
+    return YES;
+}
+
+- (BOOL)setHalfPress:(BOOL)pressed error:(NSError **)outError {
+    if (!_dev || !_connected) { if (outError) *outError = MakeError(@"Camera not connected"); return NO; }
+    SCRSDK::CrError e = [self setProperty:SCRSDK::CrDeviceProperty_S1
+                                    value:pressed ? SCRSDK::CrLockIndicator_Locked : SCRSDK::CrLockIndicator_Unlocked];
+    if (e) { if (outError) *outError = MakeError([NSString stringWithFormat:@"Half-press failed (0x%x)", e]); return NO; }
+    return YES;
+}
+
+- (BOOL)fullPressWithError:(NSError **)outError {
+    if (!_dev || !_connected) { if (outError) *outError = MakeError(@"Camera not connected"); return NO; }
+    SCRSDK::CrError e = SCRSDK::SendCommand(_dev, SCRSDK::CrCommandId_Release, SCRSDK::CrCommandParam_Down);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    SCRSDK::CrError e2 = SCRSDK::SendCommand(_dev, SCRSDK::CrCommandId_Release, SCRSDK::CrCommandParam_Up);
+    if (e || e2) { if (outError) *outError = MakeError([NSString stringWithFormat:@"Shutter command failed (0x%x)", e ? e : e2]); return NO; }
+    return YES;
 }
 
 - (void)teardown {

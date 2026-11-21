@@ -24,10 +24,20 @@ let package = Package(
                 ]),
             ]
         ),
+        // Pure Swift (no camera, no UI): marker ARW writer, ExifTool wrapper, delivery pipeline.
+        .target(
+            name: "CaptureCore",
+            path: "Sources/CaptureCore"
+        ),
         .executableTarget(
             name: "Viewfinder",
-            dependencies: ["CCameraShim"],
+            dependencies: ["CCameraShim", "CaptureCore"],
             path: "Sources/Viewfinder"
+        ),
+        .testTarget(
+            name: "CaptureCoreTests",
+            dependencies: ["CaptureCore"],
+            path: "Tests/CaptureCoreTests"
         ),
     ]
 )

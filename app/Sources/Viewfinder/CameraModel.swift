@@ -1,34 +1,88 @@
 import AppKit
 import CCameraShim
+import CaptureCore
 import Foundation
 
-/// Owns the camera connection and aggregates statistics for the UI.
+/// A shutter press whose photo has not been delivered yet.
+private struct PendingShot {
+    let id = UUID()
+    var context: ShotContext
+    var captured = false
+}
+
+/// Owns the camera connection, the shooting controls and the delivery of photos.
 final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
     @Published var status = "Connecting…"
     @Published var state: CameraBridgeState = .reconnecting  // shown as "not live" until first connect
     @Published var statsLine = ""
 
+    // Shooting
+    @Published var halfPressed = false
+    @Published var shotsInFlight = 0
+    /// A shutter press has been sent but the camera has not yet reported taking the photo.
+    @Published var awaitingCapture = false
+    @Published var stackOpen = false
+    @Published var lastMessage = ""
+    @Published var errorMessage: String?
+    @Published var lastDelivered: URL?
+
+    let settings: AppSettings
     let frameView = FrameView(frame: .zero)
     private let bridge = CameraBridge()
+    private let exiftool = ExifTool.locate()
+    private let pipeline: DeliveryPipeline
+
+    // All of this is touched on the main thread only.
+    private var pending: [PendingShot] = []
+    private var failed: [(url: URL, context: ShotContext)] = []
+    private var clock = CameraClock()
+    private var lastCameraTime: NaiveTime?
+    private var markerQueue: [Bool] = []   // true = opening marker, false = closing marker
+
+    /// A press with no capture signal after this long did not fire (the camera may have been busy).
+    var captureTimeoutSeconds = 8.0
+    /// A captured photo that has not arrived after this long is given up on.
+    var transferTimeoutSeconds = 180.0
+
+    /// How long to hold the half-press before the full press, for the camera to settle (focus, metering).
+    /// With manual focus 1 s is plenty; the true minimum has not been measured.
+    var halfPressSettleSeconds = 1.0
 
     // Stats (touched only on the main thread via onDisplayed).
     private var frames = 0, totalFrames = 0
     private var latencySum = 0.0, latencyMax = 0.0, decodeSum = 0.0
     private var windowStart = DispatchTime.now().uptimeNanoseconds
     private var allLatencies: [Double] = []
-    private var imageSize = CGSize.zero
     var logToStdout = true
 
-    override init() {
+    // Connect/disconnect and shutter work runs on serial queues, never on an SDK callback thread.
+    private let ctl = DispatchQueue(label: "camera.control")
+    private let shutterQueue = DispatchQueue(label: "camera.shutter")
+    fileprivate var wantConnected = true
+    private var recovering = false
+
+    /// `isolatedDefaults`: use a throwaway preferences suite (for `--autotest`).
+    init(isolatedDefaults: Bool = false) {
+        if isolatedDefaults {
+            let suite = "capture-viewfinder-autotest"
+            UserDefaults().removePersistentDomain(forName: suite)
+            settings = AppSettings(defaults: UserDefaults(suiteName: suite)!)
+        } else {
+            settings = AppSettings()
+        }
+        pipeline = DeliveryPipeline(exiftool: exiftool, exploringDirectory: AppFolders.exploring)
         super.init()
+        clock = CameraClock(offset: settings.cameraClockOffset)
         bridge.delegate = self
         frameView.onDisplayed = { [weak self] latency, decode, size in self?.record(latency, decode, size) }
+        try? FileManager.default.createDirectory(at: AppFolders.staging, withIntermediateDirectories: true)
+        purgeOldExploringFiles()
+        if exiftool == nil { print("WARNING: ExifTool not found; camera capture times cannot be read (stack markers need them).") }
     }
 
-    // All connect/disconnect work runs on this serial queue (never on an SDK callback thread).
-    private let ctl = DispatchQueue(label: "camera.control")
-    private var wantConnected = true
-    private var recovering = false
+    var exifToolAvailable: Bool { exiftool != nil }
+
+    // MARK: Connection
 
     func start() { ctl.async { self.connectLoop() } }
 
@@ -40,6 +94,7 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
             setStatus("Connecting…", .reconnecting)
             do {
                 try bridge.connect()
+                try? bridge.setSaveFolder(AppFolders.staging.path)
                 return  // the Connected state arrives via the delegate
             } catch {
                 let msg = error.localizedDescription
@@ -54,7 +109,7 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
         DispatchQueue.main.async {
             self.status = message
             self.state = newState
-            if newState != .connected { self.statsLine = "" }  // don't show stale fps while not live
+            if newState != .connected { self.statsLine = ""; self.halfPressed = false }
         }
     }
 
@@ -65,7 +120,127 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
         printSummary()
     }
 
+    // MARK: Shutter
+
+    /// Hold (true) or release (false) the half-press, like the physical button.
+    func setHalfPress(_ pressed: Bool) {
+        guard state == .connected, pressed != halfPressed else { return }
+        halfPressed = pressed
+        shutterQueue.async {
+            do { try self.bridge.setHalfPress(pressed) }
+            catch { DispatchQueue.main.async { self.halfPressed = false; self.errorMessage = error.localizedDescription } }
+        }
+    }
+
+    /// Full press. If the half-press is not already held, holds it briefly first (the camera
+    /// will not fire on a full press alone).
+    func shoot() {
+        guard state == .connected else { errorMessage = "The camera is not connected."; return }
+        if settings.mode == .capture && settings.destinationURL == nil {
+            errorMessage = "Capture mode needs a destination folder. Choose one in Settings (⌘,)."
+            return
+        }
+        // One press at a time until the camera reports the photo: otherwise a capture signal could not be
+        // matched to the shot (and its description) it belongs to.
+        if pending.contains(where: { !$0.captured }) {
+            errorMessage = "The previous shot has not been taken yet."
+            return
+        }
+        let ctx = ShotContext(mode: settings.mode, destination: settings.destinationURL,
+                              description: settings.photoDescription, macTime: .local())
+        let shot = PendingShot(context: ctx)
+        pending.append(shot)
+        updatePendingState()
+        let alreadyHeld = halfPressed
+        let settle = halfPressSettleSeconds
+        shutterQueue.async {
+            do {
+                if !alreadyHeld {
+                    try self.bridge.setHalfPress(true)
+                    Thread.sleep(forTimeInterval: settle)
+                }
+                try self.bridge.fullPress()
+                if !alreadyHeld {
+                    Thread.sleep(forTimeInterval: 0.3)
+                    try self.bridge.setHalfPress(false)
+                }
+                // The commands were accepted; now the camera must confirm that it took the photo.
+                DispatchQueue.main.asyncAfter(deadline: .now() + self.captureTimeoutSeconds) {
+                    self.expire(shot.id, ifCaptured: false,
+                                message: "The camera did not take the photo (no capture signal within \(Int(self.captureTimeoutSeconds)) s). It may have been busy; try again.")
+                }
+            } catch {
+                try? self.bridge.setHalfPress(false)
+                DispatchQueue.main.async {
+                    self.remove(shot.id)
+                    self.errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func updatePendingState() {
+        shotsInFlight = pending.count
+        awaitingCapture = pending.contains { !$0.captured }
+    }
+
+    private func remove(_ id: UUID) {
+        pending.removeAll { $0.id == id }
+        updatePendingState()
+        drainMarkers()
+    }
+
+    /// Gives up on a shot that is still in the same state (not captured / captured but not delivered).
+    private func expire(_ id: UUID, ifCaptured captured: Bool, message: String) {
+        guard let shot = pending.first(where: { $0.id == id }), shot.captured == captured else { return }
+        remove(id)
+        errorMessage = message
+    }
+
+    // MARK: Stacks
+
+    /// Start or stop a focus stack by writing a black marker photo into the destination.
+    func toggleStack() {
+        guard settings.mode == .capture, settings.destinationURL != nil else {
+            errorMessage = "Stacks are marked in capture mode, with a destination folder set."
+            return
+        }
+        guard clock.offset != nil else {
+            errorMessage = "Take one photo first, so the app can learn the camera's clock; markers must carry the camera's time to sort correctly."
+            return
+        }
+        markerQueue.append(!stackOpen)
+        stackOpen.toggle()
+        drainMarkers()
+    }
+
+    /// Markers wait until every photo still in flight has been delivered: the importer closes a
+    /// stack at the closing marker, so a photo arriving after it would end up outside the stack.
+    private func drainMarkers() {
+        guard pending.isEmpty, !markerQueue.isEmpty, let dir = settings.destinationURL else { return }
+        let opening = markerQueue.removeFirst()
+        var t = clock.cameraNow()
+        if let last = lastCameraTime, t <= last { t = last.advanced(by: 0.05) }
+        lastCameraTime = t
+        Task {
+            do {
+                let url = try await self.pipeline.deliverMarker(at: t, into: dir)
+                await MainActor.run {
+                    self.lastMessage = "Wrote \(opening ? "opening" : "closing") marker \(url.lastPathComponent)"
+                    self.drainMarkers()
+                }
+            } catch {
+                await MainActor.run {
+                    self.stackOpen = !opening   // it did not happen
+                    self.errorMessage = "\(error)"
+                    self.drainMarkers()
+                }
+            }
+        }
+    }
+
     // MARK: CameraBridgeDelegate (SDK thread)
+
     func cameraBridge(_ bridge: CameraBridge, didReceiveFrame jpeg: Data, arrivalNanos: UInt64) {
         frameView.submit(jpeg: jpeg, arrivalNanos: arrivalNanos)
     }
@@ -74,6 +249,10 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
         print("STATE: \(newState.rawValue) \(message)")
         let text = newState == .connected ? "Connected: \(bridge.modelName ?? "camera")" : message
         setStatus(text, newState)
+        if newState == .connected {
+            ctl.async { try? bridge.setSaveFolder(AppFolders.staging.path) }  // reapply after an SDK reconnect
+            if let note = bridge.transferNote { DispatchQueue.main.async { self.lastMessage = note } }
+        }
         if newState == .disconnected {
             // The SDK gave up: tear down and start our own retry loop.
             ctl.async {
@@ -85,9 +264,82 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
         }
     }
 
+    func cameraBridgeDidCapture(_ bridge: CameraBridge) {
+        DispatchQueue.main.async {
+            if let i = self.pending.firstIndex(where: { !$0.captured }) {
+                self.pending[i].captured = true
+                self.pending[i].context.macTime = .local()  // when the exposure happened, for clock learning
+                let id = self.pending[i].id
+                DispatchQueue.main.asyncAfter(deadline: .now() + self.transferTimeoutSeconds) {
+                    self.expire(id, ifCaptured: true,
+                                message: "A photo was taken but never arrived on this Mac (no transfer after \(Int(self.transferTimeoutSeconds)) s). It should still be on the camera's card.")
+                }
+            }
+            self.updatePendingState()
+            self.lastMessage = "Captured; transferring…"
+        }
+    }
+
+    func cameraBridge(_ bridge: CameraBridge, didDownloadFile path: String) {
+        DispatchQueue.main.async { self.handleDownload(URL(fileURLWithPath: path)) }
+    }
+
+    // MARK: Delivery (main thread)
+
+    private func handleDownload(_ staged: URL) {
+        // Photos arrive in the order they were shot; use what was decided at the shutter press.
+        let ctx: ShotContext
+        if !pending.isEmpty { ctx = pending.removeFirst().context }
+        else { ctx = ShotContext(mode: settings.mode, destination: settings.destinationURL, description: settings.photoDescription) }
+        updatePendingState()
+        deliver(staged, ctx)
+    }
+
+    private func deliver(_ staged: URL, _ ctx: ShotContext) {
+        Task {
+            do {
+                let result = try await self.pipeline.deliver(staged: staged, context: ctx)
+                await MainActor.run {
+                    if let cam = result.cameraTime {
+                        self.clock.learn(camera: cam, mac: ctx.macTime)
+                        self.settings.cameraClockOffset = self.clock.offset
+                        if self.lastCameraTime == nil || cam > self.lastCameraTime! { self.lastCameraTime = cam }
+                    }
+                    self.lastDelivered = result.url
+                    self.lastMessage = (result.mode == .capture ? "Saved " : "Explored ") + result.url.lastPathComponent
+                    self.drainMarkers()
+                    self.retryFailed()
+                }
+            } catch {
+                await MainActor.run {
+                    self.failed.append((staged, ctx))
+                    self.errorMessage = "\(error) The photo is kept in \(AppFolders.staging.path) and will be retried."
+                    self.drainMarkers()
+                }
+            }
+        }
+    }
+
+    /// Retry photos whose delivery failed (e.g. the destination drive was not mounted).
+    func retryFailed() {
+        let items = failed
+        failed.removeAll()
+        for item in items { deliver(item.url, item.context) }
+    }
+
+    private func purgeOldExploringFiles() {
+        let cutoff = Date().addingTimeInterval(-7 * 24 * 3600)
+        let urls = (try? FileManager.default.contentsOfDirectory(at: AppFolders.exploring, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        for u in urls {
+            if let d = try? u.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate, d < cutoff {
+                try? FileManager.default.removeItem(at: u)
+            }
+        }
+    }
+
     // MARK: Stats (main thread)
+
     private func record(_ latency: Double, _ decode: Double, _ size: CGSize) {
-        imageSize = size
         frames += 1; totalFrames += 1
         latencySum += latency; latencyMax = max(latencyMax, latency); decodeSum += decode
         allLatencies.append(latency)

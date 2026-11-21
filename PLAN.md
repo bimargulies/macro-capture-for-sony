@@ -237,3 +237,143 @@ Choice: option 2 (or 1 as fallback). A Swift package or Xcode target holds the `
 ## Model usage note
 
 Sonnet is sufficient for the spike: mostly well-trodden work (C++ CLI against an SDK, an Objective-C++ wrapper, a small SwiftUI view, code signing), and failures will likely be camera or USB issues rather than reasoning problems. Consider Fable for the Phase 2 decisions (SDK callback threading model, in-process vs. XPC, Metal pipeline design) and for an architecture review before committing to the full app, since those are hard to reverse.
+
+# Phase 2: shooting and delivery (implemented and tested on the camera)
+
+Requirements (from user, 2026-11-21): a half-press and a full-press shutter control; two modes, **exploring** and **capture**; a **start stack / stop stack** button; a description text box that ends up in the file's description metadata. No camera-setting controls yet.
+
+## Design decision: descriptions go in a sidecar .xmp, ARW files are never modified (2026-11-21)
+
+Decided by the user after the tests below. Writing into the ARW works with ExifTool but is fragile (Sony's private offset tables; Exiv2 broke them) and a firmware change could break any rewriter. So:
+
+- The app **never modifies an ARW**. Delivered ARWs are byte-identical to what the camera produced (a test asserts this).
+- A description is saved in `CAP-yyyyMMdd-NNNN.xmp` beside `CAP-yyyyMMdd-NNNN.ARW` (the Adobe convention Bridge/Lightroom read), as XMP `dc:description` (lang `x-default`). The app writes this text itself (`XMPSidecar`); **ExifTool is no longer used to write anything in the app**, only to read the camera's capture time.
+- **Order matters: the sidecar is placed first, then the ARW** (each by atomic rename), so the importer never sees a photo without its description.
+- The importer (`../import-sony-raw-photos`, v0.6.0, committed there) finds the sidecar (`X.xmp` or `X.ARW.xmp`, case-insensitive), reads the description with ExifTool, writes it into the DNG's IPTC caption, XMP description and EXIF description (dnglab drops them), and deletes the sidecar with the ARW. It falls back to description fields embedded in the ARW. Tested end to end with a real ARW, accents, `<>&"` and Japanese.
+- Exploring mode writes no sidecar. Stack markers have none.
+
+## Test shot results (2026-11-21, A7R V, `spike/cli/shoot.cpp`)
+
+- **A full press alone (S2 Down/Up) did nothing**, even in manual focus: no capture event, no download. **S1 lock first, then S2 Down/Up, then S1 unlock** fired the shutter. So the app's shutter button must send S1 before S2 (or use `CrCommandId_S1andRelease`, **not yet tested**). A 1.5 s pause after S1 was used in the test (manual focus, no focus confirmation to wait for); the minimum pause needed is unknown.
+- Timeline: `CrNotify_Captured_Event` (via `OnWarning`, 0x20011) at about the moment of release, then `OnCompleteDownload` about **2 s later** with the full path. The file was a **65.7 MB compressed ARW** (9600x6376 raw), only the ARW (the camera's file type was RAW, so no JPEG arrived even though `RAW_J_PC_Save_Image` was RAW+JPEG).
+- The camera was already set to save to PC and card (`StillImageStoreDestination` = 0x3), so the test changed no camera settings.
+- ARW structure (ExifTool): IFD0 `PreviewImage` (141 KB), IFD2 `JpgFromRaw` (4 MB), SubIFD raw strip (61 MB), empty `ImageDescription` slots.
+- **Camera clock is one hour ahead of this Mac** (EXIF `DateTimeOriginal` 14:54:39 at about 13:55 Mac time). Not a problem for shots, but see markers below.
+
+## Description metadata: verified
+
+On a copy of the real ARW, `exiftool -overwrite_original -IPTC:Caption-Abstract=... -XMP-dc:Description=... -EXIF:ImageDescription=...`:
+
+- Takes 0.18 s; all three fields read back; the **raw image data is bit-identical** (`ImageDataMD5` unchanged).
+- ExifTool rewrites the file (23 KB smaller, raw strip offset moved), and the 6 `-validate` warnings it prints are **also present in the camera's original**, so they are not caused by the edit.
+- **`dnglab convert` (what the importer uses) drops all three description fields.** The DNG from the described ARW has no description at all. Copying them across afterward works: `exiftool -overwrite_original -tagsFromFile src.ARW -IPTC:Caption-Abstract -XMP-dc:Description -EXIF:ImageDescription out.dng` (raw data still identical). **So the importer in `../import-sony-raw-photos` needs this extra step for the description to survive.** (Not edited; separate project, to be agreed with the user.)
+- **Not yet tested:** reading the description back in Adobe Bridge.
+- Conclusion: ARW can carry the description, no DNG wrapping is needed on our side, and ExifTool is a good tool for the job.
+
+## What the importer expects (from `../import-sony-raw-photos`)
+
+- It reads `.ARW` files, sorts them by **EXIF `DateTimeOriginal` plus `SubSecTimeOriginal`** (capture order), and converts them to DNG with `dnglab`.
+- A **marker is a real photo, a black frame** (lens cap on): it extracts the embedded JPEG (`exiftool -b -PreviewImage`, falling back to `-JpgFromRaw`, then `-OtherImage`), shrinks it to 64x64, and calls it black if the **center half has mean luma <= 12 and standard deviation <= 5**. Markers come in **open/close pairs**: the first opens a stack, the next closes it; markers are deleted without a DNG, and the photos between them go into `stack-NNN/`. A marker that closes an empty stack triggers a warning.
+- It also checks the file is **complete**: from `StripOffsets`/`StripByteCounts` in any IFD, the data must end inside the file; otherwise it is "incomplete" and skipped until it grows. Our delivery must therefore move files into the watched folder only when finished (the atomic-rename plan already does this).
+- It needs `ImageWidth`/`ImageHeight` for non-markers and a usable `DateTimeOriginal` for everything.
+- Implications for our **synthetic black marker ARW**:
+  - It must be a valid TIFF-based ARW that ExifTool reads, with `Make`/`Model`, an `ExifIFD` with `DateTimeOriginal` and `SubSecTimeOriginal`, one or more strip offsets/counts that fit inside the file, and an **embedded black JPEG preview** in a place ExifTool exposes as `PreviewImage` (IFD0 in real files).
+  - **Its timestamps must be on the camera's clock** (which is an hour off from the Mac here) so that it sorts correctly between the shots: derive the offset from the previous shot's `DateTimeOriginal` against the Mac time when it arrived, or read the camera clock through the SDK. Marker times must fall strictly between the last shot of a stack and the next one (and the closing marker after the last shot).
+  - Cheapest build: a small hand-written TIFF writer in Swift (a few hundred bytes of structure plus a tiny black JPEG). Acceptance test: run the importer's own `detectBlackFrame` and `checkComplete` against our generated files, and `exiftool -validate`. Alternative (wasteful, 60+ MB per marker): clone a real ARW and replace the preview.
+
+## Bundling ExifTool
+
+- ExifTool has **no C/Swift SDK**; it is a Perl library with a command-line script (`Image::ExifTool`). The practical ways to use it from an app are: (a) bundle the script and its `lib` folder (about 19 MB for `lib/perl5/Image/ExifTool`, which can be pruned, e.g. language files) inside the `.app` and run it with the system Perl at `/usr/bin/perl` (5.34 on this Mac, still present on macOS 27); (b) require it to be installed (the importer already requires `exiftool` on `PATH`, here from Homebrew at `/opt/homebrew/bin/exiftool`); (c) link a different library (Exiv2 is C++ but its ARW writing is limited and less proven) or write our own TIFF/XMP code.
+- Recommendation: (a) with fallback to a user-installed copy, run with `-stay_open True -@ -` (one long-lived process) if we ever call it often. Per-call cost is about 0.2 s, fine for per-shot use. Risk to note: Apple has been deprecating the system Perl and may remove it in a later macOS; ExifTool's license (Artistic/GPL) allows bundling with attribution.
+
+## Exiv2 evaluated and rejected for writing ARW (2026-11-21)
+
+Tested Exiv2 0.28.9 (Homebrew; GPL-2.0-or-later) on a copy of a real A7R V ARW, writing the same three description fields with `exiv2 -M"set ..." modify`.
+
+- Description fields write and read back, and the raw image data hash is unchanged.
+- **But the Sony private block (`SR2Private`) is destroyed:** ExifTool reports "Bad format for SR2Private entry N" and then stops parsing it; the file had **1321** SR2 tags before and after the ExifTool edit, and **0** after the Exiv2 edit. That block holds white balance, color matrices and black level.
+- **`dnglab convert` then fails** ("Couldn't find tag SonyOffset") on the Exiv2-edited file; it works on the original and on the ExifTool-edited file. The importer would fail on every described photo.
+- Cause (likely): Exiv2 relocates the SR2 data without fixing the offsets stored inside it; ExifTool rewrites them (it changed `SR2SubIFDOffset`/`HiddenDataOffset` and the block still parses).
+- Other considerations (moot now): Exiv2 would have removed the Perl dependency and run in-process, but is GPL and does not help the importer, which needs ExifTool anyway.
+- **Decision: use ExifTool for all ARW metadata writes.** Keep the metadata code behind one small interface so a different backend could be tried later, but never write ARW with a tool that has not passed this test (raw hash, SR2 tag count, `dnglab` conversion).
+
+## What the SDK provides (from the API reference and headers)
+
+- **Half press (S1):** device property `CrDeviceProperty_S1`, value `CrLockIndicator_Locked` / `Unlocked` (lock = button held half-down). A UI "hold to half-press" button can set Locked on mouse-down and Unlocked on mouse-up, like the physical button.
+- **Full press (S2):** command `CrCommandId_Release` with `CrCommandParam_Down` then `Up` (the docs say Down must be followed by Up). `CrCommandId_S1andRelease` does S1 plus S2 in one command.
+- **Image transfer to the Mac:** set `CrDeviceProperty_StillImageStoreDestination` to `HostPC` (or `HostPCAndMemoryCard`). Then each capture is transferred automatically into the folder given to `SetSaveInfo(path, prefix, startNo)`, and the SDK calls `OnCompleteDownload(filename)` with the stored path. `CrNotify_Captured_Event` (in `OnWarning`) fires earlier, when the image is in camera memory.
+- **What gets transferred** for RAW+JPEG shooting is `CrDeviceProperty_RAW_J_PC_Save_Image` (RAW and JPEG / JPEG only / RAW only / with HEIF). To get only the ARW on the Mac this should be RAW Only. (Camera settings are out of scope for now, but this one decides what arrives.)
+- Related status: `CrDeviceProperty_FocusIndication` (focus lock result), live-view focus frames.
+
+## Delivery pipeline
+
+The SDK always writes to a **staging folder** we own, never directly to the final destination. `OnCompleteDownload` then hands the file to our pipeline on a background queue:
+
+- **Exploring mode:** leave (or move) the ARW in a local temporary folder (e.g. under `~/Library/Caches/<app>/exploring/`), tell the UI so a later high-fidelity viewer window can open it (decode via Core Image's RAW engine, to be verified for the A7R V). Purge old files by age/size at launch.
+- **Capture mode:** apply the description metadata, name the file from our own counter, then **move it into the destination folder atomically** (write elsewhere, then rename), so downstream tools (stacking software, Bridge) never see a half-written file. Destination comes from a preference (folder chooser in Settings). If the destination is unavailable (e.g. unplugged drive), keep the staged file, show an error, and retry or let the user pick again; never lose a shot.
+- Mode switching only changes where the pipeline routes the next file; the SDK keeps writing to staging. Mode is visible in the main window and ideally remembered.
+- File naming: we control a counter per destination folder (scan for the highest existing number at start) so ARW files and the black marker images share one ordered sequence.
+
+## Start stack / stop stack
+
+- A toggle button. Press 1 ("Start stack"): write a **black marker image** into the destination folder and relabel to "Stop stack". Press 2: write a second black image, relabel back. Marker images must sort into the same name sequence as the shots so stack boundaries are in the right place.
+- Presumably only meaningful in capture mode (disabled in exploring mode). Confirm.
+- Open: marker file format and size (see questions below). A JPEG/PNG/TIFF is trivial; a black DNG or ARW is more work.
+
+## Description metadata
+
+- **Can an ARW carry IPTC?** Yes in principle: ARW is TIFF-based, and the IPTC block lives in the TIFF tag `0x83BB` (plus XMP, plus EXIF `ImageDescription`). ExifTool 13.55 (installed here, `/opt/homebrew/bin/exiftool`) lists ARW as writable. **Not yet verified on a real ARW** (none on this machine): the first real capture must be used to test writing, reading back in Adobe Bridge (the user's tool), and that the raw data is untouched.
+- Fields to write for "description": IPTC `Caption-Abstract`, XMP `dc:description`, and EXIF `ImageDescription`, so Bridge, Lightroom and others all show it. (Confirm with user which field they actually look at.)
+- **How to write it in the app:** (a) bundle ExifTool (a Perl script plus libraries, about 30 MB with homebrew's Perl dependency; or require it installed), (b) write an XMP sidecar (`.xmp` next to the ARW), which is non-destructive and read by Bridge/Lightroom/Capture One but not every tool, or (c) our own small TIFF/XMP writer (more work, more risk).
+- **DNG fallback** (only if in-place ARW writing is unsafe or rejected): Adobe DNG Converter (the user has Adobe software) can wrap ARW to DNG on the command line and preserves metadata, so write the description into the ARW first and then convert; or use the DNG SDK. A DNG changes the raw container and may be unwelcome for stacking workflows, so prefer ARW.
+
+## UI sketch
+
+Under the viewfinder: mode selector (Exploring / Capture) with the destination shown in capture mode; a "hold for half-press" button and a "Shutter" button (also keyboard shortcuts, e.g. space for shutter); a Start/Stop stack button; a description text field (kept across shots until edited). Settings: destination folder (and later naming, staging retention). Status line: last delivered file, transfer progress, errors.
+
+## Risks and things to measure
+
+- Transfer time of a full-size A7R V ARW over USB (tens of MB; likely seconds) and what live view does during and after an exposure (freeze, blackout, resume).
+- Back-to-back shots while the previous one is still transferring (queueing); whether the camera buffers.
+- Sony's callbacks arrive on SDK threads; the pipeline must hand off immediately and never block them.
+- Camera must be in a mode that allows remote release (dial and lens switch states).
+- Destination on a slow or external volume must not block the UI or lose files.
+
+## Proposed order of work
+
+1. **Test shot with Sony's sample** (needs your OK to fire the shutter) to get a real ARW, then test ExifTool IPTC/XMP writing and Bridge readback. This decides the metadata approach before any UI.
+2. Shim: S1 property, S2 command, set destination and `SetSaveInfo`, expose `OnCompleteDownload` and capture events to Swift.
+3. Swift: staging, exploring/capture routing, atomic move, counter; Settings for destination.
+4. UI controls, stack markers, description field.
+5. Measure transfer time and live view behavior around exposures.
+
+## Phase 2 implementation status (2026-11-21)
+
+Built in `app/` (all uncommitted at the time of writing):
+
+- `Sources/CaptureCore` (pure Swift, 25 unit tests, `swift test` from `app/`): `NaiveTime`/`CameraClock` (camera clock offset), `MarkerARW` (black marker ARW writer), `XMPSidecar`, `ExifTool` (read-only: capture time), `DeliveryPipeline` (staging, exploring/capture routing, atomic placement, naming `CAP-yyyyMMdd-NNNN.ARW`, never overwrites, keeps the staged file on any failure).
+- Shim (`CameraBridge`): `setSaveFolder`, `setHalfPress`, `fullPress`, capture and download delegate events, and a check at connect that the camera sends photos to the Mac (it switches a card-only camera to "Mac and card" and says so).
+- App: Exploring/Capture picker, Half-press (hold) button, Shutter (full press; presses half-way first if not held), Start/Stop stack, description field, Settings window for the destination folder, status and error banner, settings in UserDefaults. A shot's mode, destination and description are **captured at the press** (not when the file arrives).
+- Stack markers wait until all photos in flight have been delivered (the importer closes a stack at the closing marker, so a late photo would fall outside it). Marker times use the camera's clock (learned from each shot's EXIF time, remembered between runs); the first marker needs one photo taken first.
+- Verified with the real importer: generated markers are recognized as black frames and complete; a stack of open marker, photos, close marker imports into `stack-001` with descriptions, markers removed.
+- ExifTool is bundled into the `.app` (`Resources/exiftool`, about 20 MB, run with `/usr/bin/perl`); `bundle.sh` proves the bundled copy runs with a clean environment.
+- `--autotest <folder>` runs 3 real shots (a stack of two with markers, one exploring) into a scratch folder with throwaway preferences (Adobe Bridge must be closed first). **Passes on the A7R V** (see below).
+- Not done: rotate control, JPEG viewer window for exploring files, minimum S1 settle time (currently 1 s), `S1andRelease` untested, purging staging leftovers at launch, per-shot progress UI beyond a counter.
+
+## Hardware test results: `--autotest` on the A7R V (2026-11-21)
+
+Passing run: shot 1 (capture, description "autotest stack"), opening marker, shot 2, shot 3, closing marker (which waited for shot 3's transfer), then one exploring shot. Verified afterwards:
+
+- Destination had `CAP-...0001.ARW/.xmp`, `0002.ARW` (marker), `0003.ARW/.xmp`, `0004.ARW/.xmp`, `0005.ARW` (marker); no hidden partial files; staging empty; the exploring shot in `~/Library/Caches/Capture Viewfinder/exploring/` with no sidecar.
+- **Delivered ARWs are untouched**: 1321 SR2 tags and no `SR2Private` warnings, same as the camera's original; `dnglab` converts them.
+- **The real importer** turned it into: shot 1 as a normal photo, `stack-001` with shots 2 and 3, markers consumed, no warnings, all three DNGs carry the description.
+- Timing: the capture signal arrives at the shutter press, the ARW (about 66 MB) finishes transferring about 1.5 to 2 s later.
+- The camera's clock is **about 3553 s ahead of this Mac** (59 min 13 s, not an exact hour), learned automatically from each shot's EXIF time; markers are stamped on the camera's clock.
+
+**Finding: the camera ignores a press made soon after a capture.** In two runs a press about 3 s after the previous exposure produced no capture signal (the SDK accepted the commands without error); presses 5 s or more after worked, and with 8 s spacing every shot fired. The cause is not known (probably busy writing the 66 MB file to the card; manual focus, so not focus priority). The minimum safe interval has **not been measured**. Consequences built into the app:
+
+- A shot with no capture signal within 8 s is dropped with an error (`captureTimeoutSeconds`); a photo that is captured but never arrives within 180 s is dropped with an error (`transferTimeoutSeconds`). Without this the "transferring" spinner and the pending closing marker waited forever (this happened in the first test run).
+- Only one press at a time: the Shutter button is disabled until the previous shot has been reported by the camera, so a capture signal can always be matched to its shot (and its description).
+- The first run also showed the test itself must check for errors; `--autotest` now does.
+
+Still open: the minimum interval between shots, whether a press during the transfer ever works (Sony's own app may know), the minimum S1 settle time (1 s now), and `S1andRelease`.

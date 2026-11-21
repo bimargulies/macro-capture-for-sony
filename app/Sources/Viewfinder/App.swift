@@ -1,4 +1,5 @@
 import AppKit
+import CaptureCore
 import SwiftUI
 
 struct FrameViewRepresentable: NSViewRepresentable {
@@ -22,6 +23,97 @@ struct ClockOverlay: View {
     }
 }
 
+/// The half-press button works like the physical one: held while the mouse is down.
+struct HalfPressButton: View {
+    @ObservedObject var model: CameraModel
+    @GestureState private var down = false
+    var body: some View {
+        Text("Half-press (hold)")
+            .padding(.horizontal, 12).padding(.vertical, 6)
+            .background(model.halfPressed ? Color.accentColor : Color.secondary.opacity(0.25))
+            .foregroundColor(model.halfPressed ? .white : .primary)
+            .cornerRadius(6)
+            .opacity(model.state == .connected ? 1 : 0.4)
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .updating($down) { _, state, _ in state = true }
+                    .onChanged { _ in model.setHalfPress(true) }
+                    .onEnded { _ in model.setHalfPress(false) }
+            )
+            .help("Hold to focus and meter; the shutter button then fires immediately")
+    }
+}
+
+struct ControlsView: View {
+    @ObservedObject var model: CameraModel
+    @ObservedObject var settings: AppSettings
+
+    private var connected: Bool { model.state == .connected }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Picker("Mode", selection: $settings.mode) {
+                    Text("Exploring").tag(CaptureMode.exploring)
+                    Text("Capture").tag(CaptureMode.capture)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 220)
+                .labelsHidden()
+                .help("Exploring keeps raw files in a local temporary folder. Capture adds the description and delivers them to the destination folder.")
+
+                if settings.mode == .capture {
+                    Image(systemName: "folder")
+                    Text(settings.destinationPath.isEmpty ? "No destination folder (Settings, ⌘,)" : settings.destinationPath)
+                        .lineLimit(1).truncationMode(.head)
+                        .foregroundColor(settings.destinationPath.isEmpty ? .red : .secondary)
+                } else {
+                    Text("Raw files stay in a local temporary folder.").foregroundColor(.secondary)
+                }
+                Spacer()
+            }
+
+            HStack(spacing: 12) {
+                HalfPressButton(model: model)
+                Button("Shutter") { model.shoot() }
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .disabled(!connected || model.awaitingCapture)
+                    .help("Full press (⌘↩). Presses half-way first if you are not already holding the half-press.")
+                Button(model.stackOpen ? "Stop stack" : "Start stack") { model.toggleStack() }
+                    .disabled(!connected || settings.mode != .capture)
+                    .help("Writes a black marker photo into the destination folder. Press again to close the stack.")
+                if model.shotsInFlight > 0 {
+                    ProgressView().controlSize(.small)
+                    Text(model.awaitingCapture ? "waiting for the camera…" : "\(model.shotsInFlight) transferring")
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+            }
+
+            HStack {
+                Text("Description")
+                TextField("Saved with each photo in a sidecar .xmp file (capture mode)", text: $settings.photoDescription)
+                    .textFieldStyle(.roundedBorder)
+                if !model.exifToolAvailable {
+                    Text("ExifTool not found (needed to read capture times)").foregroundColor(.red)
+                }
+            }
+
+            if let err = model.errorMessage {
+                HStack(alignment: .top) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.red)
+                    Text(err).foregroundColor(.red).fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button("Dismiss") { model.errorMessage = nil }
+                }
+            } else if !model.lastMessage.isEmpty {
+                Text(model.lastMessage).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
+            }
+        }
+        .padding(10)
+    }
+}
+
 struct ContentView: View {
     @ObservedObject var model: CameraModel
     let showClock = CommandLine.arguments.contains("--clock")
@@ -42,6 +134,9 @@ struct ContentView: View {
                         }
                     }
                 }
+            Divider()
+            ControlsView(model: model, settings: model.settings)
+            Divider()
             HStack {
                 Text(model.status)
                 Spacer()
@@ -52,8 +147,50 @@ struct ContentView: View {
     }
 }
 
+struct SettingsView: View {
+    @ObservedObject var model: CameraModel
+    @ObservedObject var settings: AppSettings
+
+    var body: some View {
+        Form {
+            Section("Capture destination") {
+                HStack {
+                    Text(settings.destinationPath.isEmpty ? "Not set" : settings.destinationPath)
+                        .lineLimit(1).truncationMode(.head)
+                        .foregroundColor(settings.destinationPath.isEmpty ? .red : .primary)
+                    Spacer()
+                    Button("Choose…") { choose() }
+                }
+                Text("In capture mode, photos (and stack markers) are placed here as finished files. The importer watches this folder.")
+                    .font(.caption).foregroundColor(.secondary)
+            }
+            Section("Folders") {
+                LabeledContent("Staging", value: AppFolders.staging.path)
+                LabeledContent("Exploring", value: AppFolders.exploring.path)
+            }
+            Section("Tools") {
+                LabeledContent("ExifTool", value: model.exifToolAvailable ? "found" : "not found")
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 560, height: 360)
+    }
+
+    private func choose() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Choose"
+        if panel.runModal() == .OK, let url = panel.url {
+            settings.destinationPath = url.path
+            model.retryFailed()
+        }
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    let model = CameraModel()
+    let model = CameraModel(isolatedDefaults: CommandLine.arguments.contains("--autotest"))
     private var sigSources: [DispatchSourceSignal] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -69,6 +206,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             src.setEventHandler { NSApp.terminate(nil) }
             src.resume()
             sigSources.append(src)
+        }
+
+        // --autotest <folder>: fire a few real shots through the whole pipeline, then quit.
+        let argv = CommandLine.arguments
+        if let i = argv.firstIndex(of: "--autotest"), i + 1 < argv.count {
+            model.runAutoTest(destination: URL(fileURLWithPath: argv[i + 1], isDirectory: true))
         }
 
         // Optional: --seconds N quits automatically (for scripted measurements).
@@ -88,6 +231,9 @@ struct ViewfinderApp: App {
     var body: some Scene {
         WindowGroup("Viewfinder") {
             ContentView(model: delegate.model)
+        }
+        Settings {
+            SettingsView(model: delegate.model, settings: delegate.model.settings)
         }
     }
 }

@@ -12,3 +12,14 @@ A macOS replacement for Sony's Imaging Edge, controlling the user's Sony A7R V (
 - Sony SDK lives in `third_party/` (gitignored, license-restricted); never commit it.
 
 See [PLAN.md](PLAN.md) for the plan, open items, and the full background and rationale.
+
+## Commands
+
+- Unit tests (no camera needed): `cd app && swift test` (needs ExifTool installed for some tests).
+- Build the signed app: `cd app && ./bundle.sh` (needs `brew install exiftool` so it can be bundled).
+- Hardware test (camera on, Adobe Bridge quit, manual focus, 3 real shots into a scratch folder): `app/build/Capture\ Viewfinder.app/Contents/MacOS/Viewfinder --autotest <folder>`.
+
+## Rules
+
+- Never modify an ARW. Descriptions go in a sidecar `.xmp` placed before the ARW. Never write ARW metadata with Exiv2 (it destroys Sony's private data; see PLAN.md).
+- The importer is a separate project at `../import-sony-raw-photos` (it has its own CLAUDE.md: bump `version` with every change, commit it, run `pnpm install-bridge`).
