@@ -397,3 +397,39 @@ Still open: the minimum interval between shots, whether a press during the trans
 - Verified on the output: marker times are the previous item's camera time + 1 ms (`15:30:17.890` photo then `.891` marker; `15:30:40.883` photo then `.884` marker), all sorted correctly; every ARW has a sidecar; markers' sidecars carry `capture-viewfinder:stack-marker`; photos carry the description; no hidden partial files; staging empty. The real importer (0.7.0 rules) imported it as: shot 1 normal, `stack-001` with shots 2 and 3, markers consumed, no warnings, descriptions on all three DNGs.
 - **Intermittent non-firing, second observation:** the 4th shot of the run, pressed about 8 s after the previous transfer finished, produced no capture signal (the app dropped it after 8 s with an error, as designed). Earlier a press about 3 s after a capture failed twice, and in one earlier run 4 shots at 8 s spacing all fired. So the failure is not explained by spacing alone. Unknown cause. Things to check: a message on the camera's screen (card full, overheating), shot count, settle time (1 s) after the half-press.
 - Possible follow-up: a reliability experiment (fixed series of shots at fixed spacing, logging fire/no-fire) to decide between automatic retry and just reporting.
+
+# Research: can we do focus peaking in the viewfinder? (2026-11-21, offline; camera tests pending)
+
+**Short answer:** yes, we can compute peaking ourselves from the live-view pixels, but the live view is too low-resolution for it to judge fine focus; it becomes useful only if the camera's focus magnifier can be driven remotely (the SDK says it can on the A7R V; not yet tried), or by checking focus on the full-resolution preview after each shot. The camera's own peaking is not available to us.
+
+## What the SDK offers on the A7R V (ILCE-7RM5)
+
+From `device_property_list.csv` (the support table) and the property docs:
+
+- **Camera peaking and zebra: NOT supported on the A7R V.** `PeakingDisplay`, `PeakingLevel`, `PeakingColor` and all `Zebra*` properties are marked unsupported for ILCE-7RM5 (and 7RM4/7RM4A/7M5); the SDK release notes say they exist only for the ILX-LR1 (video body). So the camera's own peaking overlay cannot be switched on or read through the SDK.
+- **Focus magnifier: supported and settable.** `CrDeviceProperty_Focus_Magnifier_Setting` carries the ratio (upper 4 bytes, from the values the camera lists, e.g. x1.0, x4.0, x8.0 as 0x0A, 0x28, 0x50) and the centre position (lower 4 bytes, x then y in a 640x480 space). Also supported: `FocusMagnificationTime`, `InitialFocusMagnifier`, `AFInFocusMagnifier`. `CrLiveViewProperty_Focus_Magnifier_Position` / `CrMagPosInfo` give the frame size. Which ratios the A7R V offers, and whether live-view frames then show the magnified region, is **untested**.
+- **Live view image:** `LiveView_Image_Quality` is only Low (640 px wide) or High (1024 px wide); we already get High (1024x768). `LiveViewDisplayEffect` (picture-effect on/off) is supported.
+- **OSD image** (`OSDImageMode`, `GetOSDImage`): the camera's on-screen overlay as a PNG (up to 640x480). Supported on the A7R V; its contents are **untested**. Since camera peaking is unsupported it very probably does not include peaking.
+- **Focus information we do get:** `FocusIndication` (AF-S/AF-C focused / not focused, tracking; meaningful with autofocus, probably nothing in manual focus), `FocusArea`, focus-frame info with live view. **Not available: any contrast map, depth map or phase-detect data.** So camera-side focus information is limited to AF results; for manual focus we have only the image.
+
+## Computing peaking ourselves
+
+A simple, cheap algorithm (blur 3x3, Sobel gradient, threshold relative to the image's own noise level, paint flagged pixels red) is prototyped in `spike/peaking/peaksim.swift`. At 1024x768 and 30 fps it is trivial for the GPU (Core Image or Metal). The limitation is resolution, not computation.
+
+Offline experiment on a real A7R V photo (the ARW's embedded 8448x6336 JPEG), simulating live view as a clean downscale to 1024x768 and the magnifier as a native-resolution 1024x768 crop:
+
+- **At live-view scale it flags every high-contrast edge, in focus or not.** Both the sharper wire and the out-of-focus black cable were outlined equally. A soft edge only a few sensor pixels wide still looks like a crisp edge after an 8x downscale.
+- **Discrimination, measured:** adding known blur at sensor scale and measuring the 99th-percentile gradient: at live-view scale it moves 1.5% at 2 to 4 px of blur, 5% at 8 px, 14% at 16 px, 30% at 32 px (so roughly 10 sensor pixels of defocus are needed to see a change). At native (magnified) scale the same measure drops 26% at 2 px and 32% at 4 px. So **a magnified view is about 5 to 8 times more sensitive**, in line with the 8.25x downscale.
+- JPEG compression at the real live-view size (about 38 KB per frame) did not change the result (JPEG quality 50 gave the same flagged area as quality 80); very heavy compression flattens flat areas.
+- **Caveats:** the simulation uses a clean downscale of a sharp photo; the camera's real live view is produced by its own readout and processing and may be softer still, and the test image was soft at pixel level (no truly sharp subject), so the absolute thresholds are not tuned. The magnifier case is simulated by cropping, not measured.
+
+## Options and recommendation
+
+1. **Peaking on the normal live view:** cheap; good for finding the subject's edges and gross focus; not reliable for fine focus (macro and stacking). Offer as a toggle, with a threshold control.
+2. **Peaking or a focus score on the camera's magnified view** (drive the magnifier through the SDK): the real fix for fine focus if the magnified live view carries native detail. **Needs a camera test.**
+3. **A numeric or bar-graph focus score** for a chosen region instead of painted peaking: more robust to noise and to JPEG artifacts, and easier to read for stacking.
+4. **Check focus on the actual photo after each shot:** the ARW embeds an 8448x6336 JPEG; showing it at 100% in the planned exploring viewer, with peaking or a score computed on it, gives true full-resolution verification (not live). This fits the exploring-mode viewer already planned.
+
+## To do when the camera is back on
+
+`spike/cli/focusprobe.cpp` (built, not yet run: the camera had powered off) will: list the magnifier's possible ratios and the other focus properties, save baseline live-view frames, try the smallest and largest magnifier ratio at the frame centre (saving frames), fetch the OSD image, and restore every setting it changed (verified by read-back). Then decide whether to build option 2.
