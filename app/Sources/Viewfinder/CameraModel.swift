@@ -179,8 +179,17 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
 
     /// Turn the ratio list and state over after (re)connecting; the camera starts un-magnified.
     private func refreshMagnifier() {
+        // The Connected callback arrives while the camera is still settling, so early reads can come back
+        // empty; retry for a few seconds.
         magQueue.async {
-            let ratios = self.bridge.magnifierRatios().map { $0.uint32Value }
+            var ratios: [UInt32] = []
+            for attempt in 0..<15 {
+                ratios = self.bridge.magnifierRatios().map { $0.uint32Value }
+                if !ratios.isEmpty { break }
+                print("magnifier ratios not available yet (attempt \(attempt + 1))")
+                Thread.sleep(forTimeInterval: 1)
+            }
+            print("magnifier ratios: \(ratios)")
             DispatchQueue.main.async {
                 self.magnifierRatios = ratios
                 self.magnifierRatio = 0
