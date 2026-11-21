@@ -69,12 +69,15 @@ final class DeliveryTests: XCTestCase {
         }
     }
 
-    func testEmptyDescriptionWritesNoSidecar() async throws {
+    func testEmptyDescriptionStillWritesAnEmptySidecar() async throws {
         let src = try stagedPhoto()
         let original = try Data(contentsOf: src)
         let r = try await pipeline.deliver(staged: src, context: ShotContext(mode: .capture, destination: dest, description: "   "))
         XCTAssertEqual(try Data(contentsOf: r.url), original)
-        XCTAssertEqual(try names(dest), [r.url.lastPathComponent])
+        let sidecar = XMPSidecar.url(for: r.url)
+        XCTAssertEqual(try names(dest), [r.url.lastPathComponent, sidecar.lastPathComponent], "a sidecar is always written: it signals the photo is complete")
+        let subject = try await exiftool.run(["-s3", "-XMP-dc:Description", "-XMP-dc:Subject", sidecar.path])
+        XCTAssertEqual(subject.trimmingCharacters(in: .whitespacesAndNewlines), "", "no description and not a marker")
     }
 
     func testAStraySidecarMakesThePipelineSkipThatNumber() async throws {
@@ -104,7 +107,9 @@ final class DeliveryTests: XCTestCase {
         let url = try await pipeline.deliverMarker(at: t, into: dest)
         let read = try await exiftool.captureTime(of: url)
         XCTAssertEqual(read, t)
-        XCTAssertEqual(try names(dest), [url.lastPathComponent])
+        XCTAssertEqual(try names(dest), [url.lastPathComponent, XMPSidecar.url(for: url).lastPathComponent])
+        let subject = try await exiftool.run(["-s3", "-XMP-dc:Subject", XMPSidecar.url(for: url).path])
+        XCTAssertEqual(subject.trimmingCharacters(in: .whitespacesAndNewlines), XMPSidecar.markerKeyword, "the sidecar says it is a marker")
     }
 
     func testMissingDestinationFailsAndKeepsTheStagedFile() async throws {

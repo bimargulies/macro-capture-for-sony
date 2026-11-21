@@ -24,10 +24,11 @@ final class AppSettings: ObservableObject {
         destinationPath.isEmpty ? nil : URL(fileURLWithPath: (destinationPath as NSString).expandingTildeInPath, isDirectory: true)
     }
 
-    /// Camera clock minus Mac clock, in seconds; learned from each shot's EXIF time and remembered.
-    var cameraClockOffset: Double? {
-        get { defaults.object(forKey: "cameraClockOffset") as? Double }
-        set { defaults.set(newValue, forKey: "cameraClockOffset") }
+    /// The camera's own timestamp of the last photo or marker delivered (remembered between runs).
+    /// A marker is stamped 1 ms after it, so it sorts right after that photo whatever the clocks say.
+    var lastCameraTime: NaiveTime? {
+        get { (defaults.object(forKey: "lastCameraTimeMs") as? Int64).map { NaiveTime(milliseconds: $0) } }
+        set { defaults.set(newValue?.milliseconds, forKey: "lastCameraTimeMs") }
     }
 }
 

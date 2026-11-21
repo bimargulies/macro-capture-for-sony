@@ -1,6 +1,7 @@
 import Foundation
 
-/// A sidecar `.xmp` file that carries a photo's description next to its ARW.
+/// A sidecar `.xmp` file that sits next to every delivered ARW. It carries the photo's description, and
+/// its presence is the "this photo is complete" signal for the importer.
 ///
 /// The ARW itself is never modified: Sony's raw files contain private offset tables that other
 /// tools can break when they rewrite the file. A sidecar named like the photo (`CAP-20261121-0001.xmp`
@@ -12,19 +13,39 @@ public enum XMPSidecar {
         raw.deletingPathExtension().appendingPathExtension("xmp")
     }
 
-    /// An XMP packet holding `description` as Dublin Core `dc:description` (language "x-default").
-    public static func make(description: String) -> Data {
-        let text = escape(clean(description))
+    /// The keyword in a marker's sidecar that tells the importer "this is a stack boundary", so it does
+    /// not have to guess from the picture.
+    public static let markerKeyword = "capture-viewfinder:stack-marker"
+
+    /// An XMP packet for a photo. The description is Dublin Core `dc:description` (language "x-default");
+    /// it is left out when empty. Every delivered photo gets a sidecar even without a description: its
+    /// presence tells the importer the photo is complete, and that nothing more is coming.
+    /// A marker's sidecar also carries `markerKeyword` and a readable title.
+    public static func make(description: String?, marker: Bool = false) -> Data {
+        let text = escape(clean(description ?? ""))
+        var body = ""
+        if marker {
+            body += """
+
+               <dc:title><rdf:Alt><rdf:li xml:lang="x-default">Stack marker (black frame)</rdf:li></rdf:Alt></dc:title>
+               <dc:subject><rdf:Bag><rdf:li>\(markerKeyword)</rdf:li></rdf:Bag></dc:subject>
+            """
+        }
+        if !text.isEmpty {
+            body += """
+
+               <dc:description>
+                <rdf:Alt>
+                 <rdf:li xml:lang="x-default">\(text)</rdf:li>
+                </rdf:Alt>
+               </dc:description>
+            """
+        }
         let xml = """
         <?xpacket begin="\u{FEFF}" id="W5M0MpCehiHzreSzNTczkc9d"?>
         <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Capture Viewfinder">
          <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
-          <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/">
-           <dc:description>
-            <rdf:Alt>
-             <rdf:li xml:lang="x-default">\(text)</rdf:li>
-            </rdf:Alt>
-           </dc:description>
+          <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmp:CreatorTool="Capture Viewfinder">\(body)
           </rdf:Description>
          </rdf:RDF>
         </x:xmpmeta>

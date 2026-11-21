@@ -27,6 +27,8 @@ public struct DeliveryResult: Sendable {
     public var mode: CaptureMode
     /// The camera's own timestamp for the photo, if it could be read.
     public var cameraTime: NaiveTime?
+    /// Set when the photo was delivered but something minor failed (e.g. the sidecar could not be written).
+    public var warning: String?
 }
 
 public enum DeliveryError: Error, CustomStringConvertible {
@@ -48,9 +50,11 @@ public enum DeliveryError: Error, CustomStringConvertible {
 /// The SDK writes into a staging folder we own; this pipeline then routes each file. Files are
 /// placed in the destination atomically (copied to a hidden temporary name in the destination
 /// folder, then renamed), because other programs watch that folder and must never see a
-/// half-written file. The ARW is never modified. A description goes into a sidecar `.xmp` that is
-/// placed BEFORE the ARW, so anything that notices the ARW already finds its description.
-/// On any failure the staged file is left where it is.
+/// half-written file. The ARW is never modified. Every delivered ARW gets a sidecar `.xmp` (with the
+/// description, if any), written AFTER the ARW: the sidecar is the "this photo is complete and visible"
+/// signal, and the importer waits for it. On a network share, where a big file can show up late or out
+/// of order, the sidecar can therefore never be seen without its photo. If the ARW cannot be delivered,
+/// the staged file is left where it is.
 public actor DeliveryPipeline {
     private let exiftool: ExifTool?
     private let exploringDirectory: URL
@@ -76,21 +80,11 @@ public actor DeliveryPipeline {
             try requireUsable(dir)
             let date = (cameraTime ?? context.macTime)
             let name = reserveName(in: dir, date: date)
-            let target = dir.appendingPathComponent(name)
-            let sidecar = XMPSidecar.url(for: target)
-            let description = context.description.trimmingCharacters(in: .whitespacesAndNewlines)
-            var wroteSidecar = false
-            do {
-                if !description.isEmpty {
-                    try writeAtomically(XMPSidecar.make(description: description), to: sidecar)
-                    wroteSidecar = true
-                }
-                let placed = try place(staged, in: dir, named: name, createIfNeeded: false, exclusive: true)
-                return DeliveryResult(url: placed, mode: .capture, cameraTime: cameraTime)
-            } catch {
-                if wroteSidecar { try? FileManager.default.removeItem(at: sidecar) }
-                throw error
-            }
+            let placed = try place(staged, in: dir, named: name, createIfNeeded: false, exclusive: true)
+            // The photo is delivered. The sidecar goes last; a failure here must not lose or re-send the photo.
+            let sidecar = XMPSidecar.url(for: placed)
+            let warning = writeSidecar(XMPSidecar.make(description: context.description), to: sidecar)
+            return DeliveryResult(url: placed, mode: .capture, cameraTime: cameraTime, warning: warning)
         }
     }
 
@@ -98,13 +92,17 @@ public actor DeliveryPipeline {
     public func deliverMarker(at time: NaiveTime, into dir: URL) throws -> URL {
         try requireUsable(dir)
         let name = reserveName(in: dir, date: time)
+        let target = dir.appendingPathComponent(name)
         do {
-            let target = dir.appendingPathComponent(name)
             try writeAtomically(MarkerARW.make(at: time), to: target)
-            return target
         } catch {
             throw DeliveryError.io("Could not write the marker to \(dir.path): \(error.localizedDescription)")
         }
+        let sidecar = XMPSidecar.url(for: target)
+        if let warning = writeSidecar(XMPSidecar.make(description: nil, marker: true), to: sidecar) {
+            throw DeliveryError.io(warning)
+        }
+        return target
     }
 
     // MARK: Naming
@@ -132,6 +130,17 @@ public actor DeliveryPipeline {
             let target = dir.appendingPathComponent(name)
             if !fm.fileExists(atPath: target.path), !fm.fileExists(atPath: XMPSidecar.url(for: target).path) { return name }
         }
+    }
+
+    /// Writes a sidecar, retrying a few times (a network share can fail transiently). Returns a warning
+    /// message on failure instead of throwing: the ARW is already in place by then.
+    private func writeSidecar(_ data: Data, to url: URL) -> String? {
+        var last: Error?
+        for attempt in 0..<3 {
+            do { try writeAtomically(data, to: url); return nil }
+            catch { last = error; if attempt < 2 { Thread.sleep(forTimeInterval: 0.5) } }
+        }
+        return "\(url.deletingPathExtension().lastPathComponent).ARW was delivered but its sidecar could not be written (\(last?.localizedDescription ?? "unknown error")). The importer will wait for it."
     }
 
     /// Writes `data` to a hidden temporary file in the same folder, then renames it into place.

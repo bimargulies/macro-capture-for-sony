@@ -76,23 +76,3 @@ public struct NaiveTime: Comparable, Hashable, Sendable {
     }
     public static func < (a: NaiveTime, b: NaiveTime) -> Bool { a.milliseconds < b.milliseconds }
 }
-
-/// The difference between the camera's clock and the Mac's, learned from each shot's EXIF time.
-public struct CameraClock: Sendable, Equatable {
-    /// Camera wall-clock minus Mac wall-clock, in seconds. Nil until a shot has been seen.
-    public var offset: Double?
-
-    public init(offset: Double? = nil) { self.offset = offset }
-
-    /// Learn the offset from a shot: the camera stamped `camera`, and we saw the capture at `mac`.
-    /// The Mac time is when the capture event arrived, a little after the exposure, so the learned
-    /// offset is a few tens of milliseconds low; that is far smaller than the gaps between shots.
-    public mutating func learn(camera: NaiveTime, mac: NaiveTime) {
-        offset = camera.seconds - mac.seconds
-    }
-
-    /// The camera's wall-clock time now (the Mac's time if no offset is known yet).
-    public func cameraNow(mac: NaiveTime = .local()) -> NaiveTime {
-        mac.advanced(by: offset ?? 0)
-    }
-}

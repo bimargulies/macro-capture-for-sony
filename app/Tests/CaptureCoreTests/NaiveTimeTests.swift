@@ -34,16 +34,4 @@ final class NaiveTimeTests: XCTestCase {
         let plus1 = NaiveTime.local(from: date, in: TimeZone(secondsFromGMT: 3600)!)
         XCTAssertEqual(plus1.seconds - utc.seconds, 3600)
     }
-
-    func testCameraClockLearnsAnHourAhead() throws {
-        let camera = try XCTUnwrap(NaiveTime(exifDateTime: "2026:11:21 14:54:39", subsec: "212"))
-        let mac = try XCTUnwrap(NaiveTime(exifDateTime: "2026:11:21 13:54:39", subsec: "300"))
-        var clock = CameraClock()
-        XCTAssertNil(clock.offset)
-        XCTAssertEqual(clock.cameraNow(mac: mac), mac, "without an offset the Mac time is used")
-        clock.learn(camera: camera, mac: mac)
-        XCTAssertEqual(try XCTUnwrap(clock.offset), 3599.912, accuracy: 0.001)
-        let later = mac.advanced(by: 10)
-        XCTAssertEqual(clock.cameraNow(mac: later), camera.advanced(by: 10))
-    }
 }

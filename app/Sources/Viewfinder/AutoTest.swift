@@ -26,7 +26,7 @@ extension CameraModel {
             settings.destinationPath = destination.path
             settings.photoDescription = "autotest stack"
 
-            // Stack markers need the camera's clock, which is learned from a first photo.
+            // A marker is stamped just after the previous photo's time, so it needs one photo first.
             toggleStack()
             log("stack toggle before any photo -> error shown: \(errorMessage != nil)  stackOpen=\(stackOpen)")
             errorMessage = nil
@@ -50,7 +50,7 @@ extension CameraModel {
             guard await shootChecked("shot 1 (capture, clock learning)") else { return finish(false) }
             guard await waitFor("shot 1 delivery", { self.shotsInFlight == 0 && deliveredCount() > lastCount }) else { return finish(false) }
             lastCount = deliveredCount()
-            log("shot 1 delivered: \(lastMessage); clock offset learned: \(settings.cameraClockOffset.map { String(format: "%.3f s", $0) } ?? "none")")
+            log("shot 1 delivered: \(lastMessage); last camera time: \(settings.lastCameraTime?.exifDateTime ?? "none")")
 
             log("open stack")
             toggleStack()

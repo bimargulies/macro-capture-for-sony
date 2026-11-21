@@ -252,6 +252,18 @@ Decided by the user after the tests below. Writing into the ARW works with ExifT
 - The importer (`../import-sony-raw-photos`, v0.6.0, committed there) finds the sidecar (`X.xmp` or `X.ARW.xmp`, case-insensitive), reads the description with ExifTool, writes it into the DNG's IPTC caption, XMP description and EXIF description (dnglab drops them), and deletes the sidecar with the ARW. It falls back to description fields embedded in the ARW. Tested end to end with a real ARW, accents, `<>&"` and Japanese.
 - Exploring mode writes no sidecar. Stack markers have none.
 
+## Design update: no clock sync, sidecar last and always, watcher waits (2026-11-21)
+
+Changes decided after the first hardware test (user concerns: clock sync, and slow NAS writes):
+
+1. **Markers are stamped from the previous item, not from a clock.** A marker's EXIF time is the previous delivered photo's (or marker's) own camera time **plus 1 ms**, so it sorts right after that photo and before whatever comes next, whatever the camera's or the Mac's clock says. The last camera time is remembered between runs (UserDefaults); the very first marker still needs one photo taken first. `CameraClock` and the learned offset are gone. (A sidecar tag alone cannot fix ordering, because the importer sorts by EXIF time; this does.)
+2. **Every `CAP-` ARW gets a sidecar `.xmp`, even with no description, written AFTER the ARW.** The sidecar means "this photo is complete and visible", which is robust on a NAS where a big file can show up late or out of order. If the sidecar write fails (3 tries), the photo is kept and a warning is shown; the importer then gives up waiting after its timeout.
+3. **A marker's sidecar carries the keyword `capture-viewfinder:stack-marker`** (XMP `dc:subject`) and a readable title, so the importer treats it as a marker without judging the picture.
+4. **The watcher (import-sony-raw-photos 0.7.0) waits for the sidecar of any file starting with `CAP-`**, up to 30 minutes (`--sidecar-wait`, `--sidecar-prefix`). While one waits, **everything captured after it is held back** (otherwise a stack could be split). After the wait: imported without a description, with a warning. Verified with real ARWs through multi-scan scenarios (wait, hold back, release, give-up, tag-only markers).
+5. Fixed a bug found on the way: the importer left a marker's sidecar behind.
+
+Supersedes the earlier "sidecar first, then ARW" and "marker times use the camera's clock offset" statements below.
+
 ## Test shot results (2026-11-21, A7R V, `spike/cli/shoot.cpp`)
 
 - **A full press alone (S2 Down/Up) did nothing**, even in manual focus: no capture event, no download. **S1 lock first, then S2 Down/Up, then S1 unlock** fired the shutter. So the app's shutter button must send S1 before S2 (or use `CrCommandId_S1andRelease`, **not yet tested**). A 1.5 s pause after S1 was used in the test (manual focus, no focus confirmation to wait for); the minimum pause needed is unknown.
@@ -354,7 +366,7 @@ Built in `app/` (all uncommitted at the time of writing):
 - `Sources/CaptureCore` (pure Swift, 25 unit tests, `swift test` from `app/`): `NaiveTime`/`CameraClock` (camera clock offset), `MarkerARW` (black marker ARW writer), `XMPSidecar`, `ExifTool` (read-only: capture time), `DeliveryPipeline` (staging, exploring/capture routing, atomic placement, naming `CAP-yyyyMMdd-NNNN.ARW`, never overwrites, keeps the staged file on any failure).
 - Shim (`CameraBridge`): `setSaveFolder`, `setHalfPress`, `fullPress`, capture and download delegate events, and a check at connect that the camera sends photos to the Mac (it switches a card-only camera to "Mac and card" and says so).
 - App: Exploring/Capture picker, Half-press (hold) button, Shutter (full press; presses half-way first if not held), Start/Stop stack, description field, Settings window for the destination folder, status and error banner, settings in UserDefaults. A shot's mode, destination and description are **captured at the press** (not when the file arrives).
-- Stack markers wait until all photos in flight have been delivered (the importer closes a stack at the closing marker, so a late photo would fall outside it). Marker times use the camera's clock (learned from each shot's EXIF time, remembered between runs); the first marker needs one photo taken first.
+- Stack markers wait until all photos in flight have been delivered (the importer closes a stack at the closing marker, so a late photo would fall outside it). Marker times are the previous item's camera time plus 1 ms (see "Design update" above); the first marker needs one photo taken first.
 - Verified with the real importer: generated markers are recognized as black frames and complete; a stack of open marker, photos, close marker imports into `stack-001` with descriptions, markers removed.
 - ExifTool is bundled into the `.app` (`Resources/exiftool`, about 20 MB, run with `/usr/bin/perl`); `bundle.sh` proves the bundled copy runs with a clean environment.
 - `--autotest <folder>` runs 3 real shots (a stack of two with markers, one exploring) into a scratch folder with throwaway preferences (Adobe Bridge must be closed first). **Passes on the A7R V** (see below).

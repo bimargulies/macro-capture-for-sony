@@ -35,7 +35,6 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
     // All of this is touched on the main thread only.
     private var pending: [PendingShot] = []
     private var failed: [(url: URL, context: ShotContext)] = []
-    private var clock = CameraClock()
     private var lastCameraTime: NaiveTime?
     private var markerQueue: [Bool] = []   // true = opening marker, false = closing marker
 
@@ -72,7 +71,7 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
         }
         pipeline = DeliveryPipeline(exiftool: exiftool, exploringDirectory: AppFolders.exploring)
         super.init()
-        clock = CameraClock(offset: settings.cameraClockOffset)
+        lastCameraTime = settings.lastCameraTime
         bridge.delegate = self
         frameView.onDisplayed = { [weak self] latency, decode, size in self?.record(latency, decode, size) }
         try? FileManager.default.createDirectory(at: AppFolders.staging, withIntermediateDirectories: true)
@@ -205,8 +204,8 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
             errorMessage = "Stacks are marked in capture mode, with a destination folder set."
             return
         }
-        guard clock.offset != nil else {
-            errorMessage = "Take one photo first, so the app can learn the camera's clock; markers must carry the camera's time to sort correctly."
+        guard lastCameraTime != nil else {
+            errorMessage = "Take one photo first: a marker is stamped just after the previous photo's own time, so it sorts correctly whatever the camera's clock says."
             return
         }
         markerQueue.append(!stackOpen)
@@ -217,11 +216,12 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
     /// Markers wait until every photo still in flight has been delivered: the importer closes a
     /// stack at the closing marker, so a photo arriving after it would end up outside the stack.
     private func drainMarkers() {
-        guard pending.isEmpty, !markerQueue.isEmpty, let dir = settings.destinationURL else { return }
+        guard pending.isEmpty, !markerQueue.isEmpty, let dir = settings.destinationURL, let last = lastCameraTime else { return }
         let opening = markerQueue.removeFirst()
-        var t = clock.cameraNow()
-        if let last = lastCameraTime, t <= last { t = last.advanced(by: 0.05) }
+        // 1 ms after the previous photo or marker: sorts right after it, before whatever comes next.
+        let t = last.advanced(by: 0.001)
         lastCameraTime = t
+        settings.lastCameraTime = t
         Task {
             do {
                 let url = try await self.pipeline.deliverMarker(at: t, into: dir)
@@ -232,6 +232,7 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
             } catch {
                 await MainActor.run {
                     self.stackOpen = !opening   // it did not happen
+                    self.lastCameraTime = self.settings.lastCameraTime  // the time slot was not used
                     self.errorMessage = "\(error)"
                     self.drainMarkers()
                 }
@@ -300,11 +301,11 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
             do {
                 let result = try await self.pipeline.deliver(staged: staged, context: ctx)
                 await MainActor.run {
-                    if let cam = result.cameraTime {
-                        self.clock.learn(camera: cam, mac: ctx.macTime)
-                        self.settings.cameraClockOffset = self.clock.offset
-                        if self.lastCameraTime == nil || cam > self.lastCameraTime! { self.lastCameraTime = cam }
+                    if let cam = result.cameraTime, self.lastCameraTime == nil || cam > self.lastCameraTime! {
+                        self.lastCameraTime = cam
+                        self.settings.lastCameraTime = cam
                     }
+                    if let warning = result.warning { self.errorMessage = warning }
                     self.lastDelivered = result.url
                     self.lastMessage = (result.mode == .capture ? "Saved " : "Explored ") + result.url.lastPathComponent
                     self.drainMarkers()

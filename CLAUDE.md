@@ -21,5 +21,5 @@ See [PLAN.md](PLAN.md) for the plan, open items, and the full background and rat
 
 ## Rules
 
-- Never modify an ARW. Descriptions go in a sidecar `.xmp` placed before the ARW. Never write ARW metadata with Exiv2 (it destroys Sony's private data; see PLAN.md).
+- Never modify an ARW. Every delivered `CAP-` ARW gets a sidecar `.xmp` (description, if any) written AFTER the ARW; the importer waits for it. Markers are stamped previous-item time + 1 ms (no clock sync) and carry a marker keyword in their sidecar. Never write ARW metadata with Exiv2 (it destroys Sony's private data; see PLAN.md).
 - The importer is a separate project at `../import-sony-raw-photos` (it has its own CLAUDE.md: bump `version` with every change, commit it, run `pnpm install-bridge`).
