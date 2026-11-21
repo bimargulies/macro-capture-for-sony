@@ -16,7 +16,7 @@ See [PLAN.md](PLAN.md) for the plan, open items, and the full background and rat
 ## Commands
 
 - Unit tests (no camera needed): `cd app && swift test` (needs ExifTool installed for some tests).
-- Build the signed app: `cd app && ./bundle.sh` (needs `brew install exiftool` so it can be bundled).
+- Build the signed app: `cd app && ./bundle.sh` (signs with the "Capture Dev" keychain identity when present, else ad hoc; a stable identity keeps Little Snitch rules valid across rebuilds) (needs `brew install exiftool` so it can be bundled).
 - Hardware test (camera on, Adobe Bridge quit, manual focus, 3 real shots into a scratch folder): `app/build/Capture\ Viewfinder.app/Contents/MacOS/Viewfinder --autotest <folder>`.
 
 ## Rules

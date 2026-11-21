@@ -3,7 +3,10 @@
 # Signing identity: SIGN_ID env var (default "-" = ad hoc). Hardened runtime is on.
 set -e
 cd "$(dirname "$0")"
-SIGN_ID="${SIGN_ID:--}"
+# Default: the self-made "Capture Dev" identity if present (stable identity keeps Little Snitch rules valid), else ad hoc.
+if [ -z "${SIGN_ID:-}" ]; then
+    if security find-certificate -c "Capture Dev" >/dev/null 2>&1; then SIGN_ID="Capture Dev"; else SIGN_ID="-"; fi
+fi
 swift build -c release
 BIN="$(swift build -c release --show-bin-path)/Viewfinder"
 APP="build/Capture Viewfinder.app"
