@@ -94,7 +94,7 @@ struct ControlsView: View {
                 }
                 .pickerStyle(.segmented).frame(width: 190).labelsHidden()
                 .disabled(!connected || model.magnifierRatios.isEmpty)
-                .help("Focus magnifier. With it off, click the picture to magnify there; drag to move; double-click or Esc to turn off.")
+                .help("Focus magnifier. Click the picture to mark a spot (orange corners follow the mouse, gray corners stay), then choose a power to magnify there. Off or Esc to return.")
                 Button("") { model.setMagnifier(ratio: 0) }
                     .keyboardShortcut(.escape, modifiers: [])
                     .frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)

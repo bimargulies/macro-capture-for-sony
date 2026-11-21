@@ -20,6 +20,7 @@ final class FrameView: NSView {
         layer?.backgroundColor = NSColor.black.cgColor
         imageLayer.contentsGravity = .resizeAspect
         layer?.addSublayer(imageLayer)
+        setUpMarkers()
     }
 
     /// The picture lives in its own layer so it can be rotated inside the view.
@@ -32,56 +33,123 @@ final class FrameView: NSView {
 
     // MARK: Mouse: pick the magnifier position
 
-    /// Click (no drag) at a point of the full picture, as fractions 0...1 of the unrotated image.
+    /// Click at a point of the full picture, as fractions 0...1 of the unrotated image (origin top-left).
     var onClick: ((CGPoint) -> Void)?
-    /// Drag while magnified: movement as a fraction of the picture's width/height (unrotated image axes).
-    var onDrag: ((CGSize) -> Void)?
-    var onDoubleClick: (() -> Void)?
     private var imageSize = CGSize(width: 4, height: 3)
-    private var dragStart: NSPoint?
-    private var lastDrag: NSPoint?
-    private var dragged = false
+
+    /// The spot chosen by a click (gray corners). Kept until the next click.
+    private(set) var placed: CGPoint?
+    /// Mouse position in the view while it is over the picture (orange corners), else nil.
+    private var hover: NSPoint?
+    /// Magnifier power in use or about to be (corner boxes show roughly the area it would cover).
+    var boxZoom: CGFloat = 4.7 { didSet { needsLayout = true } }
+    /// While magnified the picture already shows the chosen area, so the corner marks are hidden.
+    var magnified = false { didSet { needsLayout = true; window?.invalidateCursorRects(for: self) } }
+
+    private let hoverLayer = CAShapeLayer()
+    private let placedLayer = CAShapeLayer()
+
+    private func setUpMarkers() {
+        for (l, c) in [(placedLayer, NSColor.systemGray), (hoverLayer, NSColor.orange)] {
+            l.fillColor = nil
+            l.strokeColor = c.cgColor
+            l.lineWidth = 2.5
+            l.lineCap = .square
+            l.zPosition = 10
+            layer?.addSublayer(l)
+        }
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
+    }
 
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    /// View vector -> image-axis fractions of the displayed (aspect-fit, rotated) picture.
-    private func imageFraction(ofViewVector v: CGVector) -> CGSize {
-        // Undo the display rotation (clockwise turns): rotate counter-clockwise by the same angle.
-        let a = CGFloat(quarterTurns) * .pi / 2
-        let lx = v.dx * cos(a) - v.dy * sin(a)
-        let ly = v.dx * sin(a) + v.dy * cos(a)
+    private static let invisibleCursor: NSCursor = {
+        let img = NSImage(size: NSSize(width: 16, height: 16))
+        return NSCursor(image: img, hotSpot: NSPoint(x: 8, y: 8))
+    }()
+
+    override func resetCursorRects() {
+        if !magnified { addCursorRect(bounds, cursor: FrameView.invisibleCursor) }
+    }
+
+    /// Size of the displayed picture in view points, and the fit scale (view points per image pixel).
+    private func displayedPictureSize() -> CGSize {
         let odd = quarterTurns % 2 == 1
         let lw = odd ? bounds.height : bounds.width, lh = odd ? bounds.width : bounds.height
         let s = min(lw / imageSize.width, lh / imageSize.height)
-        return CGSize(width: lx / (imageSize.width * s), height: -ly / (imageSize.height * s))  // image y grows downward
+        let w = imageSize.width * s, h = imageSize.height * s
+        return odd ? CGSize(width: h, height: w) : CGSize(width: w, height: h)
     }
 
+    /// View vector (from the view centre) to image fractions 0...1.
     private func imagePoint(_ p: NSPoint) -> CGPoint {
-        let f = imageFraction(ofViewVector: CGVector(dx: p.x - bounds.midX, dy: p.y - bounds.midY))
-        return CGPoint(x: min(max(f.width + 0.5, 0), 1), y: min(max(f.height + 0.5, 0), 1))
+        let a = CGFloat(quarterTurns) * .pi / 2
+        let vx = p.x - bounds.midX, vy = p.y - bounds.midY
+        let lx = vx * cos(a) - vy * sin(a)
+        let ly = vx * sin(a) + vy * cos(a)
+        let odd = quarterTurns % 2 == 1
+        let lw = odd ? bounds.height : bounds.width, lh = odd ? bounds.width : bounds.height
+        let s = min(lw / imageSize.width, lh / imageSize.height)
+        return CGPoint(x: min(max(lx / (imageSize.width * s) + 0.5, 0), 1),
+                       y: min(max(-ly / (imageSize.height * s) + 0.5, 0), 1))
     }
+
+    /// Image fractions to a point in the view.
+    private func viewPoint(_ f: CGPoint) -> NSPoint {
+        let odd = quarterTurns % 2 == 1
+        let lw = odd ? bounds.height : bounds.width, lh = odd ? bounds.width : bounds.height
+        let s = min(lw / imageSize.width, lh / imageSize.height)
+        let lx = (f.x - 0.5) * imageSize.width * s
+        let ly = -(f.y - 0.5) * imageSize.height * s
+        let a = CGFloat(quarterTurns) * .pi / 2
+        return NSPoint(x: bounds.midX + lx * cos(a) + ly * sin(a),
+                       y: bounds.midY - lx * sin(a) + ly * cos(a))
+    }
+
+    /// Four corner brackets of a box centred on `c`, about the size of the area the magnifier would show.
+    private func cornerPath(around c: NSPoint) -> CGPath {
+        let pic = displayedPictureSize()
+        let w = max(pic.width / boxZoom, 24), h = max(pic.height / boxZoom, 18)
+        let arm = min(w, h) * 0.3
+        let r = CGRect(x: c.x - w / 2, y: c.y - h / 2, width: w, height: h)
+        let path = CGMutablePath()
+        for (corner, dx, dy) in [(CGPoint(x: r.minX, y: r.minY), 1.0, 1.0), (CGPoint(x: r.maxX, y: r.minY), -1.0, 1.0),
+                                 (CGPoint(x: r.minX, y: r.maxY), 1.0, -1.0), (CGPoint(x: r.maxX, y: r.maxY), -1.0, -1.0)] {
+            path.move(to: CGPoint(x: corner.x + dx * arm, y: corner.y))
+            path.addLine(to: corner)
+            path.addLine(to: CGPoint(x: corner.x, y: corner.y + dy * arm))
+        }
+        return path
+    }
+
+    private func updateMarkers() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        placedLayer.frame = bounds
+        hoverLayer.frame = bounds
+        if magnified { placedLayer.path = nil; hoverLayer.path = nil }
+        else {
+            placedLayer.path = placed.map { cornerPath(around: viewPoint($0)) }
+            hoverLayer.path = hover.map { cornerPath(around: $0) }
+        }
+        CATransaction.commit()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        hover = convert(event.locationInWindow, from: nil)
+        updateMarkers()
+    }
+    override func mouseDragged(with event: NSEvent) { mouseMoved(with: event) }
+    override func mouseExited(with event: NSEvent) { hover = nil; updateMarkers() }
 
     override func mouseDown(with event: NSEvent) {
+        guard !magnified else { return }
         let p = convert(event.locationInWindow, from: nil)
-        if event.clickCount == 2 { onDoubleClick?(); dragStart = nil; return }
-        dragStart = p; lastDrag = p; dragged = false
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        guard let start = dragStart, let last = lastDrag else { return }
-        let p = convert(event.locationInWindow, from: nil)
-        if !dragged && hypot(p.x - start.x, p.y - start.y) < 4 { return }
-        dragged = true
-        let f = imageFraction(ofViewVector: CGVector(dx: p.x - last.x, dy: p.y - last.y))
-        lastDrag = p
-        onDrag?(f)
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        defer { dragStart = nil; lastDrag = nil }
-        guard let start = dragStart, !dragged else { return }
-        onClick?(imagePoint(start))
+        let f = imagePoint(p)
+        placed = f
+        updateMarkers()
+        onClick?(f)
     }
 
     override func layout() {
@@ -96,6 +164,7 @@ final class FrameView: NSView {
         imageLayer.position = CGPoint(x: b.midX, y: b.midY)
         imageLayer.transform = CATransform3DMakeRotation(-CGFloat(quarterTurns) * .pi / 2, 0, 0, 1)
         CATransaction.commit()
+        updateMarkers()
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -111,7 +180,6 @@ final class FrameView: NSView {
     }
 
     /// Remember the full (un-magnified) picture's shape for click mapping.
-    var magnified = false
     private func lastFullSize(_ img: CGImage) {
         if !magnified { imageSize = CGSize(width: img.width, height: img.height) }
     }

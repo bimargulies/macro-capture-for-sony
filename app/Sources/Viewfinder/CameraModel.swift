@@ -84,20 +84,8 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
         super.init()
         lastCameraTime = settings.lastCameraTime
         bridge.delegate = self
-        frameView.onClick = { [weak self] p in
-            guard let self, self.magnifierRatio == 0 else { return }
-            let r = self.preferredRatio != 0 ? self.preferredRatio : (self.magnifierRatios.first ?? 0)
-            if r != 0 { self.setMagnifier(ratio: r, center: p) }
-        }
-        frameView.onDoubleClick = { [weak self] in self?.setMagnifier(ratio: 0) }
-        frameView.onDrag = { [weak self] d in
-            guard let self, self.magnifierRatio != 0 else { return }
-            // Dragging moves the picture with the pointer, so the window moves the other way,
-            // by 1/zoom as much of the full picture.
-            let z = CGFloat(self.magnifierRatio) / 10
-            self.setMagnifier(ratio: self.magnifierRatio,
-                              center: CGPoint(x: self.magnifierCenter.x - d.width / z, y: self.magnifierCenter.y - d.height / z))
-        }
+        // A click only marks the spot; choosing a magnification then centres on it.
+        frameView.onClick = { [weak self] p in self?.magnifierCenter = p }
         frameView.onDisplayed = { [weak self] latency, decode, size in self?.record(latency, decode, size) }
         try? FileManager.default.createDirectory(at: AppFolders.staging, withIntermediateDirectories: true)
         purgeOldExploringFiles()
@@ -154,7 +142,7 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
         if let center {
             magnifierCenter = CGPoint(x: min(max(center.x, 0), 1), y: min(max(center.y, 0), 1))
         }
-        if ratio != 0 { preferredRatio = ratio }
+        if ratio != 0 { preferredRatio = ratio; frameView.boxZoom = CGFloat(ratio) / 10 }
         magnifierRatio = ratio
         frameView.magnified = ratio != 0
         let x = Int((magnifierCenter.x * 639).rounded()), y = Int((magnifierCenter.y * 479).rounded())
@@ -194,6 +182,7 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
                 self.magnifierRatios = ratios
                 self.magnifierRatio = 0
                 if !ratios.contains(self.preferredRatio) { self.preferredRatio = ratios.first ?? 0 }
+                if self.preferredRatio != 0 { self.frameView.boxZoom = CGFloat(self.preferredRatio) / 10 }
             }
         }
     }
