@@ -1,0 +1,14 @@
+# Sony SDK (license-restricted, do not commit)
+third_party/
+
+# macOS / Xcode
+.DS_Store
+xcuserdata/
+DerivedData/
+build/
+*.xcuserstate
+
+# Spike output
+spike/**/frames/
+*.jpg
+.build/
