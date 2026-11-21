@@ -41,8 +41,9 @@ final class FrameView: NSView {
     private(set) var placed: CGPoint?
     /// Mouse position in the view while it is over the picture (orange corners), else nil.
     private var hover: NSPoint?
-    /// Magnifier power in use or about to be (corner boxes show roughly the area it would cover).
-    var boxZoom: CGFloat = 4.7 { didSet { needsLayout = true } }
+    /// Corner box size as a fraction of the displayed picture (fixed; the power is not known until after the click).
+    private let boxFraction: CGFloat = 1 / 9.4
+
     /// While magnified the picture already shows the chosen area, so the corner marks are hidden.
     var magnified = false { didSet { needsLayout = true; window?.invalidateCursorRects(for: self) } }
 
@@ -110,7 +111,7 @@ final class FrameView: NSView {
     /// Four corner brackets of a box centred on `c`, about the size of the area the magnifier would show.
     private func cornerPath(around c: NSPoint) -> CGPath {
         let pic = displayedPictureSize()
-        let w = max(pic.width / boxZoom, 24), h = max(pic.height / boxZoom, 18)
+        let w = max(pic.width * boxFraction, 24), h = max(pic.height * boxFraction, 18)
         let arm = min(w, h) * 0.3
         let r = CGRect(x: c.x - w / 2, y: c.y - h / 2, width: w, height: h)
         let path = CGMutablePath()

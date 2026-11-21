@@ -142,7 +142,7 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
         if let center {
             magnifierCenter = CGPoint(x: min(max(center.x, 0), 1), y: min(max(center.y, 0), 1))
         }
-        if ratio != 0 { preferredRatio = ratio; frameView.boxZoom = CGFloat(ratio) / 10 }
+        if ratio != 0 { preferredRatio = ratio }
         magnifierRatio = ratio
         frameView.magnified = ratio != 0
         let x = Int((magnifierCenter.x * 639).rounded()), y = Int((magnifierCenter.y * 479).rounded())
@@ -182,7 +182,6 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
                 self.magnifierRatios = ratios
                 self.magnifierRatio = 0
                 if !ratios.contains(self.preferredRatio) { self.preferredRatio = ratios.first ?? 0 }
-                if self.preferredRatio != 0 { self.frameView.boxZoom = CGFloat(self.preferredRatio) / 10 }
             }
         }
     }
