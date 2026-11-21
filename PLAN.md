@@ -389,3 +389,11 @@ Passing run: shot 1 (capture, description "autotest stack"), opening marker, sho
 - The first run also showed the test itself must check for errors; `--autotest` now does.
 
 Still open: the minimum interval between shots, whether a press during the transfer ever works (Sony's own app may know), the minimum S1 settle time (1 s now), and `S1andRelease`.
+
+## Hardware retest of the new flow (2026-11-21, after the sidecar/marker redesign)
+
+`--autotest` again, with the importer at 0.7.0 running as the watcher. Result: the capture-mode stack part **passed**; the final exploring-mode shot did not fire, so the run reported FAIL.
+
+- Verified on the output: marker times are the previous item's camera time + 1 ms (`15:30:17.890` photo then `.891` marker; `15:30:40.883` photo then `.884` marker), all sorted correctly; every ARW has a sidecar; markers' sidecars carry `capture-viewfinder:stack-marker`; photos carry the description; no hidden partial files; staging empty. The real importer (0.7.0 rules) imported it as: shot 1 normal, `stack-001` with shots 2 and 3, markers consumed, no warnings, descriptions on all three DNGs.
+- **Intermittent non-firing, second observation:** the 4th shot of the run, pressed about 8 s after the previous transfer finished, produced no capture signal (the app dropped it after 8 s with an error, as designed). Earlier a press about 3 s after a capture failed twice, and in one earlier run 4 shots at 8 s spacing all fired. So the failure is not explained by spacing alone. Unknown cause. Things to check: a message on the camera's screen (card full, overheating), shot count, settle time (1 s) after the half-press.
+- Possible follow-up: a reliability experiment (fixed series of shots at fixed spacing, logging fire/no-fire) to decide between automatic retry and just reporting.
