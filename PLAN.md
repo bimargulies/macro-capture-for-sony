@@ -440,3 +440,11 @@ Offline experiment on a real A7R V photo (the ARW's embedded 8448x6336 JPEG), si
 - `FocusMagnificationTime`, `OSDImageMode`, `PeakingDisplay` not readable. `FocusIndication` readable but read-only.
 - So option 2 (peaking/focus score on a magnified live view) is mechanically feasible. Open: whether magnified frames carry native-resolution detail (test with a well-lit, textured subject; the test scene was very dark and the centre was featureless), and the frame rate while magnified.
 - Probe saves: base_*.jpg, mag_x1_*.jpg, mag_x9_*.jpg.
+
+## Viewer (exploring photos)
+
+- Two tabs in one window (Viewfinder / Viewer, ⌘1 / ⌘2); the shutter and description controls stay available in both. The Viewer shows a carousel of the last 30 exploring photos (`ViewerModel.keep`; older ones are deleted at launch and after each new shot) with the selected one large. ⌘← / ⌘→ step through; double-click toggles fit / 100%; pinch or ⌥-scroll zooms; drag or scroll pans.
+- Images come from the ARW's embedded JPEGs via ExifTool (read-only): `PreviewImage` (~1.6k px, for 320 px thumbnails) and `JpgFromRaw` (the large view). They are cached in `<exploring>/.cache/` along with the EXIF orientation; the ARW is never touched.
+- "Capture this photo" (⌘K) copies the ARW to the destination as a normal `CAP-` capture, using the current description, sidecar last; the exploring copy stays and gets a green check.
+- Caveat: a promoted photo keeps its original camera time. If a stack is open when you capture an older exploring photo, the importer (which sorts by capture time) will not place it inside that stack.
+- `--viewer` launch argument opens on the Viewer tab (for screenshots).

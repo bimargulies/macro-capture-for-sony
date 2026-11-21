@@ -38,8 +38,13 @@ public struct ExifTool: Sendable {
 
     /// Runs ExifTool with the arguments and returns standard output. Never blocks the caller's thread.
     public func run(_ arguments: [String]) async throws -> String {
+        String(decoding: try await runData(arguments), as: UTF8.self)
+    }
+
+    /// Like `run`, but returns the raw bytes (for `-b` extraction of embedded images).
+    public func runData(_ arguments: [String]) async throws -> Data {
         let exe = executable, args = leadingArguments + arguments
-        return try await withCheckedThrowingContinuation { cont in
+        return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Data, Error>) in
             DispatchQueue.global(qos: .userInitiated).async {
                 let p = Process()
                 p.executableURL = exe
@@ -57,7 +62,7 @@ public struct ExifTool: Sendable {
                 errGroup.wait()
                 p.waitUntilExit()
                 if p.terminationStatus == 0 {
-                    cont.resume(returning: String(decoding: outData, as: UTF8.self))
+                    cont.resume(returning: outData)
                 } else {
                     cont.resume(throwing: ExifToolError.failed(status: p.terminationStatus, stderr: String(decoding: errData, as: UTF8.self)))
                 }

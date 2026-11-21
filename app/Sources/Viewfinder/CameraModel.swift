@@ -26,6 +26,10 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
     @Published var errorMessage: String?
     @Published var lastDelivered: URL?
 
+    /// Which tab is showing: the live viewfinder (false) or the viewer of exploring photos (true).
+    @Published var showViewer = CommandLine.arguments.contains("--viewer")
+    let viewer: ViewerModel
+
     /// Bottom-line exposure readout: shutter, aperture, ISO, meter, compensation.
     @Published var exposureLine = ""
 
@@ -84,6 +88,8 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
             settings = AppSettings()
         }
         pipeline = DeliveryPipeline(exiftool: exiftool, exploringDirectory: AppFolders.exploring)
+        viewer = ViewerModel(library: ExploringLibrary(directory: AppFolders.exploring), exiftool: exiftool,
+                             defaults: isolatedDefaults ? UserDefaults(suiteName: "capture-viewfinder-autotest")! : .standard)
         super.init()
         lastCameraTime = settings.lastCameraTime
         bridge.delegate = self
@@ -91,7 +97,7 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
         frameView.onClick = { [weak self] p in self?.magnifierCenter = p }
         frameView.onDisplayed = { [weak self] latency, decode, size in self?.record(latency, decode, size) }
         try? FileManager.default.createDirectory(at: AppFolders.staging, withIntermediateDirectories: true)
-        purgeOldExploringFiles()
+        viewer.reload()
         if exiftool == nil { print("WARNING: ExifTool not found; camera capture times cannot be read (stack markers need them).") }
     }
 
@@ -431,6 +437,7 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
                     }
                     if let warning = result.warning { self.errorMessage = warning }
                     self.lastDelivered = result.url
+                    if result.mode == .exploring { self.viewer.reload(selectNewest: true) }
                     self.lastMessage = (result.mode == .capture ? "Saved " : "Explored ") + result.url.lastPathComponent
                     self.drainMarkers()
                     self.retryFailed()
@@ -452,12 +459,24 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
         for item in items { deliver(item.url, item.context) }
     }
 
-    private func purgeOldExploringFiles() {
-        let cutoff = Date().addingTimeInterval(-7 * 24 * 3600)
-        let urls = (try? FileManager.default.contentsOfDirectory(at: AppFolders.exploring, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
-        for u in urls {
-            if let d = try? u.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate, d < cutoff {
-                try? FileManager.default.removeItem(at: u)
+    /// Copies the photo selected in the viewer to the destination folder, as a capture (with the description).
+    func captureSelected() {
+        guard let item = viewer.selected else { return }
+        guard let dir = settings.destinationURL else {
+            errorMessage = "Choose a destination folder first (Settings, ⌘,)."
+            return
+        }
+        let description = settings.photoDescription
+        Task {
+            do {
+                let result = try await pipeline.promote(exploring: item.url, description: description, into: dir)
+                await MainActor.run {
+                    self.viewer.markCaptured(item.id)
+                    if let w = result.warning { self.errorMessage = w }
+                    self.lastMessage = "Saved \(result.url.lastPathComponent) (from \(item.url.lastPathComponent))"
+                }
+            } catch {
+                await MainActor.run { self.errorMessage = "\(error)" }
             }
         }
     }

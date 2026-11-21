@@ -5,8 +5,12 @@ import SwiftUI
 struct FrameViewRepresentable: NSViewRepresentable {
     let view: FrameView
     let quarterTurns: Int
+    let hidden: Bool
     func makeNSView(context: Context) -> FrameView { view }
-    func updateNSView(_ nsView: FrameView, context: Context) { nsView.quarterTurns = quarterTurns }
+    func updateNSView(_ nsView: FrameView, context: Context) {
+        nsView.quarterTurns = quarterTurns
+        nsView.isHidden = hidden   // hidden views also drop their cursor rects
+    }
 }
 
 /// Large millisecond clock for glass-to-glass latency tests: point the camera at this
@@ -75,6 +79,16 @@ struct ControlsView: View {
             }
 
             HStack(spacing: 12) {
+                Picker("View", selection: $model.showViewer) {
+                    Text("Viewfinder").tag(false)
+                    Text("Viewer").tag(true)
+                }
+                .pickerStyle(.segmented).frame(width: 170).labelsHidden()
+                .help("Switch between the live viewfinder (⌘1) and the photos you have explored (⌘2)")
+                Button("") { model.showViewer = false }.keyboardShortcut("1", modifiers: .command)
+                    .frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
+                Button("") { model.showViewer = true }.keyboardShortcut("2", modifiers: .command)
+                    .frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
                 HalfPressButton(model: model)
                 Button("Shutter") { model.shoot() }
                     .keyboardShortcut(.return, modifiers: .command)
@@ -139,8 +153,9 @@ struct ContentView: View {
     let showClock = CommandLine.arguments.contains("--clock")
     var body: some View {
         VStack(spacing: 0) {
-            FrameViewRepresentable(view: model.frameView, quarterTurns: settings.rotation)
+            FrameViewRepresentable(view: model.frameView, quarterTurns: settings.rotation, hidden: model.showViewer)
                 .frame(minWidth: 360, minHeight: 360)
+                .overlay { if model.showViewer { ViewerView(model: model, viewer: model.viewer) } }
                 .overlay(alignment: .topLeading) { if showClock { ClockOverlay() } }
                 .overlay {
                     if model.state != .connected {
@@ -259,4 +274,88 @@ struct ViewfinderApp: App {
             SettingsView(model: delegate.model, settings: delegate.model.settings)
         }
     }
+}
+
+
+/// The viewer tab: the selected exploring photo large, with a carousel of recent ones below.
+struct ViewerView: View {
+    @ObservedObject var model: CameraModel
+    @ObservedObject var viewer: ViewerModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ZStack {
+                PhotoViewRepresentable(image: viewer.large?.image, turns: viewer.large?.turns ?? 0)
+                if viewer.loading { ProgressView().controlSize(.large) }
+                else if viewer.items.isEmpty {
+                    Text("No explored photos yet. Take one in Exploring mode.").foregroundColor(.gray)
+                } else if let p = viewer.problem {
+                    Text(p).foregroundColor(.red).padding()
+                }
+            }
+            Divider()
+            HStack(spacing: 12) {
+                Text(viewer.selected?.url.lastPathComponent ?? "").font(.system(.callout, design: .monospaced))
+                if viewer.selected?.captured == true { Label("captured", systemImage: "checkmark.circle.fill").foregroundColor(.green) }
+                Text("double-click to zoom to 100%").foregroundColor(.secondary).font(.caption)
+                Spacer()
+                Button("◀") { viewer.step(-1) }.keyboardShortcut(.leftArrow, modifiers: .command)
+                Button("▶") { viewer.step(1) }.keyboardShortcut(.rightArrow, modifiers: .command)
+                Button("Capture this photo") { model.captureSelected() }
+                    .keyboardShortcut("k", modifiers: .command)
+                    .disabled(viewer.selected == nil)
+                    .help("Copy this photo to the destination folder, with the description (⌘K). The explored copy stays here.")
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            Carousel(viewer: viewer)
+        }
+        .background(Color.black)
+    }
+}
+
+struct Carousel: View {
+    @ObservedObject var viewer: ViewerModel
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal) {
+                LazyHStack(spacing: 6) {
+                    ForEach(viewer.items) { item in
+                        ZStack(alignment: .topTrailing) {
+                            Group {
+                                if let t = item.thumbnail { Image(nsImage: t).resizable().aspectRatio(contentMode: .fit) }
+                                else { Color.gray.opacity(0.3) }
+                            }
+                            .frame(width: 120, height: 80)
+                            .background(Color.black)
+                            if item.captured {
+                                Image(systemName: "checkmark.circle.fill").foregroundColor(.green).padding(3)
+                            }
+                        }
+                        .border(item.id == viewer.selectedID ? Color.orange : Color.clear, width: 3)
+                        .id(item.id)
+                        .onTapGesture { viewer.select(item.id) }
+                    }
+                }
+                .padding(6)
+            }
+            .frame(height: 96)
+            .onChange(of: viewer.selectedID) { id in if let id { proxy.scrollTo(id) } }
+            .onAppear { if let id = viewer.selectedID { proxy.scrollTo(id) } }
+        }
+    }
+}
+
+struct PhotoViewRepresentable: NSViewRepresentable {
+    let image: CGImage?
+    let turns: Int
+    func makeNSView(context: Context) -> PhotoView { PhotoView(frame: .zero) }
+    func updateNSView(_ v: PhotoView, context: Context) {
+        // Only reset zoom when the picture itself changes.
+        if context.coordinator.lastImage !== image.map({ $0 as AnyObject }) as AnyObject? {
+            context.coordinator.lastImage = image.map { $0 as AnyObject }
+            v.setImage(image, quarterTurns: turns)
+        }
+    }
+    func makeCoordinator() -> Coordinator { Coordinator() }
+    final class Coordinator { var lastImage: AnyObject? }
 }

@@ -88,6 +88,18 @@ public actor DeliveryPipeline {
         }
     }
 
+    /// Copies an exploring-mode photo into the destination as a capture (the original stays in the exploring
+    /// folder). Same rules as a fresh capture: atomic placement, then the sidecar with the description, last.
+    public func promote(exploring file: URL, description: String, into dir: URL) async throws -> DeliveryResult {
+        try requireUsable(dir)
+        let cameraTime = try? await exiftool?.captureTime(of: file)
+        let date = cameraTime ?? .local()
+        let name = reserveName(in: dir, date: date)
+        let placed = try place(file, in: dir, named: name, createIfNeeded: false, exclusive: true, keepSource: true)
+        let warning = writeSidecar(XMPSidecar.make(description: description), to: XMPSidecar.url(for: placed))
+        return DeliveryResult(url: placed, mode: .capture, cameraTime: cameraTime, warning: warning)
+    }
+
     /// Writes a black marker ARW (a stack boundary) into the destination, stamped `time` (camera clock).
     public func deliverMarker(at time: NaiveTime, into dir: URL) throws -> URL {
         try requireUsable(dir)
@@ -174,7 +186,7 @@ public actor DeliveryPipeline {
         catch { throw DeliveryError.destinationUnavailable(dir) }
     }
 
-    private func place(_ src: URL, in dir: URL, named name: String, createIfNeeded: Bool, exclusive: Bool) throws -> URL {
+    private func place(_ src: URL, in dir: URL, named name: String, createIfNeeded: Bool, exclusive: Bool, keepSource: Bool = false) throws -> URL {
         let fm = FileManager.default
         if createIfNeeded { try fm.createDirectory(at: dir, withIntermediateDirectories: true) }
         let target = dir.appendingPathComponent(name)
@@ -183,7 +195,7 @@ public actor DeliveryPipeline {
             try? fm.removeItem(at: partial)
             try fm.copyItem(at: src, to: partial)
             let final = try finalize(partial, as: target, exclusive: exclusive)
-            try? fm.removeItem(at: src)
+            if !keepSource { try? fm.removeItem(at: src) }
             return final
         } catch {
             try? fm.removeItem(at: partial)
