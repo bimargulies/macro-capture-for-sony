@@ -321,6 +321,14 @@ public:
     return out;
 }
 
+- (int)currentMagnifierRatio {
+    if (!_dev || !_connected) return -1;
+    SCRSDK::CrDeviceProperty p;
+    if (![self getProperty:SCRSDK::CrDeviceProperty_Focus_Magnifier_Setting into:p]) return -1;
+    uint32_t r = (uint32_t)(p.GetCurrentValue() >> 32);
+    return r <= 10 ? 0 : (int)r;
+}
+
 - (BOOL)setMagnifierRatio:(uint32_t)ratio x:(int)x y:(int)y error:(NSError **)outError {
     if (!_dev || !_connected) { if (outError) *outError = MakeError(@"Camera not connected"); return NO; }
     x = std::max(0, std::min(639, x));

@@ -53,6 +53,9 @@ typedef NS_ENUM(NSInteger, CameraBridgeState) {
 /// Excludes "off" and x1.0 (which looks the same as off). Empty if unsupported.
 - (NSArray<NSNumber *> *)magnifierRatios;
 
+/// The magnifier ratio the camera is using right now (0 = off), or -1 if it could not be read.
+- (int)currentMagnifierRatio;
+
 /// Sets the focus magnifier. `ratio` 0 turns it off. `x`,`y` are the centre in the camera's
 /// 640x480 coordinate space (0,0 top-left). Takes effect in the live view within a moment.
 - (BOOL)setMagnifierRatio:(uint32_t)ratio x:(int)x y:(int)y error:(NSError * _Nullable * _Nullable)error;

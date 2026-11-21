@@ -96,7 +96,7 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
 
     // MARK: Connection
 
-    func start() { ctl.async { self.connectLoop() } }
+    func start() { ctl.async { self.connectLoop() }; startMagnifierWatch() }
 
     /// Keeps trying until connected (or shutdown). Runs on `ctl`.
     private func connectLoop() {
@@ -121,7 +121,7 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
         DispatchQueue.main.async {
             self.status = message
             self.state = newState
-            if newState != .connected { self.statsLine = ""; self.halfPressed = false; self.magnifierRatio = 0 }
+            if newState != .connected { self.statsLine = ""; self.halfPressed = false }
         }
     }
 
@@ -180,9 +180,27 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
             print("magnifier ratios: \(ratios)")
             DispatchQueue.main.async {
                 self.magnifierRatios = ratios
-                self.magnifierRatio = 0
                 if !ratios.contains(self.preferredRatio) { self.preferredRatio = ratios.first ?? 0 }
             }
+        }
+    }
+
+    /// The camera can drop out of magnification by itself (after a reconnect, or around shooting).
+    /// The chosen power is the user's intent, so put it back whenever the camera disagrees.
+    private func startMagnifierWatch() {
+        magQueue.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self, self.wantConnected else { return }
+            self.magLock.lock(); let busy = self.magWanted != nil; self.magLock.unlock()
+            if self.state == .connected && !busy {
+                let desired = self.magnifierRatio
+                let actual = self.bridge.currentMagnifierRatio()
+                if actual >= 0 && UInt32(actual) != desired {
+                    print("magnifier: camera at \(actual), wanted \(desired); restoring")
+                    let c = self.magnifierCenter
+                    try? self.bridge.setMagnifierRatio(desired, x: Int32((c.x * 639).rounded()), y: Int32((c.y * 479).rounded()))
+                }
+            }
+            self.startMagnifierWatch()
         }
     }
 
