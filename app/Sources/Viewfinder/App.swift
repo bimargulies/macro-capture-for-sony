@@ -86,6 +86,7 @@ struct ControlsView: View {
                 Button { settings.rotation = (settings.rotation + 1) % 4 } label: { Image(systemName: "rotate.right") }
                     .keyboardShortcut("]", modifiers: .command)
                     .help("Rotate the viewfinder image clockwise (⌘]). Display only.")
+                Text("Magnifier").foregroundColor(.secondary)
                 Picker("Magnifier", selection: Binding(get: { model.magnifierRatio },
                                                        set: { model.setMagnifier(ratio: $0) })) {
                     Text("Off").tag(UInt32(0))
