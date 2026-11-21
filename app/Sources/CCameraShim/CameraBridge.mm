@@ -321,6 +321,28 @@ public:
     return out;
 }
 
+const unsigned CameraBridgePropFNumber = SCRSDK::CrDeviceProperty_FNumber;
+const unsigned CameraBridgePropShutterSpeed = SCRSDK::CrDeviceProperty_ShutterSpeed;
+const unsigned CameraBridgePropISO = SCRSDK::CrDeviceProperty_IsoSensitivity;
+const unsigned CameraBridgePropExposureBias = SCRSDK::CrDeviceProperty_ExposureBiasCompensation;
+const unsigned CameraBridgePropMeteredManual = SCRSDK::CrDeviceProperty_MeteredManualLevel;
+const unsigned CameraBridgePropExposureProgram = SCRSDK::CrDeviceProperty_ExposureProgramMode;
+
+- (NSDictionary<NSNumber *, NSNumber *> *)readExposure {
+    NSMutableDictionary *out = [NSMutableDictionary dictionary];
+    if (!_dev || !_connected) return out;
+    CrInt32u codes[] = { CameraBridgePropFNumber, CameraBridgePropShutterSpeed, CameraBridgePropISO,
+                         CameraBridgePropExposureBias, CameraBridgePropMeteredManual, CameraBridgePropExposureProgram };
+    CrInt32 n = 0;
+    SCRSDK::CrDeviceProperty *list = nullptr;
+    SCRSDK::CrError err = SCRSDK::GetSelectDeviceProperties(_dev, 6, codes, &list, &n);
+    if (!err && list) {
+        for (CrInt32 i = 0; i < n; i++) out[@(list[i].GetCode())] = @(list[i].GetCurrentValue());
+    }
+    if (list) SCRSDK::ReleaseDeviceProperties(_dev, list);
+    return out;
+}
+
 - (int)currentMagnifierRatio {
     if (!_dev || !_connected) return -1;
     SCRSDK::CrDeviceProperty p;

@@ -159,6 +159,9 @@ struct ContentView: View {
             Divider()
             HStack {
                 Text(model.status)
+                if !model.exposureLine.isEmpty {
+                    Text(model.exposureLine).font(.system(.body, design: .monospaced)).padding(.leading, 12)
+                }
                 Spacer()
                 Text(model.statsLine).font(.system(.caption, design: .monospaced))
             }

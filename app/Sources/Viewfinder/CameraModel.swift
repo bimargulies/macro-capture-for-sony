@@ -26,6 +26,9 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
     @Published var errorMessage: String?
     @Published var lastDelivered: URL?
 
+    /// Bottom-line exposure readout: shutter, aperture, ISO, meter, compensation.
+    @Published var exposureLine = ""
+
     // Focus magnifier. Ratio 0 = off, else tenths of a power (47 = x4.7).
     @Published var magnifierRatios: [UInt32] = []
     @Published var magnifierRatio: UInt32 = 0
@@ -96,7 +99,7 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
 
     // MARK: Connection
 
-    func start() { ctl.async { self.connectLoop() }; startMagnifierWatch() }
+    func start() { ctl.async { self.connectLoop() }; startMagnifierWatch(); startExposureWatch() }
 
     /// Keeps trying until connected (or shutdown). Runs on `ctl`.
     private func connectLoop() {
@@ -202,6 +205,41 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
             }
             self.startMagnifierWatch()
         }
+    }
+
+    // MARK: Exposure readout
+
+    private let exposureQueue = DispatchQueue(label: "camera.exposure")
+    private var exposureLogged = false
+
+    /// Reads the exposure settings twice a second while connected.
+    private func startExposureWatch() {
+        exposureQueue.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self, self.wantConnected else { return }
+            if self.state == .connected {
+                let raw = self.bridge.readExposure()
+                if !self.exposureLogged && !raw.isEmpty {
+                    self.exposureLogged = true
+                    print("exposure raw: " + raw.map { String(format: "0x%x=0x%llx", $0.key.uint32Value, $0.value.uint64Value) }.sorted().joined(separator: " "))
+                }
+                let line = Self.format(raw)
+                DispatchQueue.main.async { if self.exposureLine != line { self.exposureLine = line } }
+            } else {
+                DispatchQueue.main.async { if !self.exposureLine.isEmpty { self.exposureLine = "" } }
+            }
+            self.startExposureWatch()
+        }
+    }
+
+    private static func format(_ raw: [NSNumber: NSNumber]) -> String {
+        func val(_ code: UInt32) -> UInt64? { raw[NSNumber(value: code)]?.uint64Value }
+        var parts: [String] = []
+        if let v = val(CameraBridgePropShutterSpeed), let t = ExposureText.shutter(v) { parts.append(t) }
+        if let v = val(CameraBridgePropFNumber), let t = ExposureText.aperture(v) { parts.append(t) }
+        if let v = val(CameraBridgePropISO), let t = ExposureText.iso(v) { parts.append(t) }
+        if let v = val(CameraBridgePropMeteredManual) { parts.append("meter " + ExposureText.ev(v)) }
+        if let v = val(CameraBridgePropExposureBias) { parts.append("comp " + ExposureText.ev(v)) }
+        return parts.joined(separator: "   ")
     }
 
     // MARK: Shutter

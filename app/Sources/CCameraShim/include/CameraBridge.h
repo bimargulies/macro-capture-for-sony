@@ -53,6 +53,11 @@ typedef NS_ENUM(NSInteger, CameraBridgeState) {
 /// Excludes "off" and x1.0 (which looks the same as off). Empty if unsupported.
 - (NSArray<NSNumber *> *)magnifierRatios;
 
+/// Current exposure settings as raw SDK values, keyed by SDK property code (CrDeviceProperty_*): f-number,
+/// shutter speed, ISO, exposure compensation, metered-manual level, exposure program. Properties the camera
+/// does not report are absent. Empty if not connected.
+- (NSDictionary<NSNumber *, NSNumber *> *)readExposure;
+
 /// The magnifier ratio the camera is using right now (0 = off), or -1 if it could not be read.
 - (int)currentMagnifierRatio;
 
@@ -69,5 +74,13 @@ typedef NS_ENUM(NSInteger, CameraBridgeState) {
 - (void)releaseSDK;
 
 @end
+
+/// SDK property codes for `readExposure`, mirrored here so Swift need not import the C++ headers.
+extern const unsigned CameraBridgePropFNumber;
+extern const unsigned CameraBridgePropShutterSpeed;
+extern const unsigned CameraBridgePropISO;
+extern const unsigned CameraBridgePropExposureBias;
+extern const unsigned CameraBridgePropMeteredManual;
+extern const unsigned CameraBridgePropExposureProgram;
 
 NS_ASSUME_NONNULL_END
