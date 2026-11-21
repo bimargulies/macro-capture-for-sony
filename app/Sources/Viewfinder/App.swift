@@ -285,7 +285,7 @@ struct ViewerView: View {
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
-                PhotoViewRepresentable(image: viewer.large?.image, turns: viewer.large?.turns ?? 0)
+                PhotoViewRepresentable(image: viewer.large?.image, turns: viewer.large?.turns ?? 0, zoomer: viewer.zoomer)
                 if viewer.loading { ProgressView().controlSize(.large) }
                 else if viewer.items.isEmpty {
                     Text("No explored photos yet. Take one in Exploring mode.").foregroundColor(.gray)
@@ -297,8 +297,14 @@ struct ViewerView: View {
             HStack(spacing: 12) {
                 Text(viewer.selected?.url.lastPathComponent ?? "").font(.system(.callout, design: .monospaced))
                 if viewer.selected?.captured == true { Label("captured", systemImage: "checkmark.circle.fill").foregroundColor(.green) }
-                Text("double-click to zoom to 100%").foregroundColor(.secondary).font(.caption)
                 Spacer()
+                Button { viewer.zoomer.zoomOut() } label: { Image(systemName: "minus.magnifyingglass") }
+                    .keyboardShortcut("-", modifiers: .command).help("Zoom out (⌘-)")
+                Button { viewer.zoomer.zoomIn() } label: { Image(systemName: "plus.magnifyingglass") }
+                    .keyboardShortcut("=", modifiers: .command).help("Zoom in (⌘+)")
+                Button("Fit") { viewer.zoomer.fit() }.help("Fit the whole photo in the window")
+                Button("100%") { viewer.zoomer.actualSize() }.help("One photo pixel per screen pixel (double-click also toggles this)")
+                Divider().frame(height: 16)
                 Button("◀") { viewer.step(-1) }.keyboardShortcut(.leftArrow, modifiers: .command)
                 Button("▶") { viewer.step(1) }.keyboardShortcut(.rightArrow, modifiers: .command)
                 Button("Capture this photo") { model.captureSelected() }
@@ -348,7 +354,8 @@ struct Carousel: View {
 struct PhotoViewRepresentable: NSViewRepresentable {
     let image: CGImage?
     let turns: Int
-    func makeNSView(context: Context) -> PhotoView { PhotoView(frame: .zero) }
+    let zoomer: PhotoZoomer
+    func makeNSView(context: Context) -> PhotoView { let v = PhotoView(frame: .zero); zoomer.view = v; return v }
     func updateNSView(_ v: PhotoView, context: Context) {
         // Only reset zoom when the picture itself changes.
         if context.coordinator.lastImage !== image.map({ $0 as AnyObject }) as AnyObject? {

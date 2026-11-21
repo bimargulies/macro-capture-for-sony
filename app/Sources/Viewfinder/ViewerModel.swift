@@ -23,6 +23,7 @@ final class ViewerModel: ObservableObject {
     @Published var problem: String?
 
     let library: ExploringLibrary
+    let zoomer = PhotoZoomer()
     private let previews: ARWPreviews?
     private let defaults: UserDefaults
     private var loadToken = UUID()

@@ -73,6 +73,12 @@ final class PhotoView: NSView {
         needsLayout = true
     }
 
+    // Commands for the zoom buttons (zoom about the centre of the view).
+    func zoomIn() { zoom(to: scale * 1.5, around: NSPoint(x: bounds.midX, y: bounds.midY)) }
+    func zoomOut() { zoom(to: scale / 1.5, around: NSPoint(x: bounds.midX, y: bounds.midY)) }
+    func zoomToFit() { fitted = true; needsLayout = true }
+    func zoomTo100() { zoom(to: fullScale, around: NSPoint(x: bounds.midX, y: bounds.midY)) }
+
     override func mouseDown(with event: NSEvent) {
         dragLast = convert(event.locationInWindow, from: nil)
         if event.clickCount == 2 {
@@ -98,4 +104,13 @@ final class PhotoView: NSView {
         zoom(to: scale * (1 + event.magnification), around: convert(event.locationInWindow, from: nil))
     }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .openHand) }
+}
+
+/// Lets SwiftUI buttons drive the photo view.
+final class PhotoZoomer {
+    weak var view: PhotoView?
+    func zoomIn() { view?.zoomIn() }
+    func zoomOut() { view?.zoomOut() }
+    func fit() { view?.zoomToFit() }
+    func actualSize() { view?.zoomTo100() }
 }
