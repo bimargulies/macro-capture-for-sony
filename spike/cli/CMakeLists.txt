@@ -30,3 +30,10 @@ target_link_libraries(shoot PRIVATE ${CR_CORE})
 set_target_properties(shoot PROPERTIES
     CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES CXX_EXTENSIONS NO
     BUILD_RPATH "@executable_path")
+
+add_executable(focusprobe focusprobe.cpp ${SDK_ROOT}/app/CrDebugString.cpp)
+target_include_directories(focusprobe PRIVATE ${HDR_DIR} ${SDK_ROOT}/app)
+target_link_libraries(focusprobe PRIVATE ${CR_CORE})
+set_target_properties(focusprobe PROPERTIES
+    CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES CXX_EXTENSIONS NO
+    BUILD_RPATH "@executable_path")
