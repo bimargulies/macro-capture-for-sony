@@ -4,8 +4,9 @@ import SwiftUI
 
 struct FrameViewRepresentable: NSViewRepresentable {
     let view: FrameView
+    let quarterTurns: Int
     func makeNSView(context: Context) -> FrameView { view }
-    func updateNSView(_ nsView: FrameView, context: Context) {}
+    func updateNSView(_ nsView: FrameView, context: Context) { nsView.quarterTurns = quarterTurns }
 }
 
 /// Large millisecond clock for glass-to-glass latency tests: point the camera at this
@@ -79,6 +80,12 @@ struct ControlsView: View {
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(!connected || model.awaitingCapture)
                     .help("Full press (⌘↩). Presses half-way first if you are not already holding the half-press.")
+                Button { settings.rotation = (settings.rotation + 3) % 4 } label: { Image(systemName: "rotate.left") }
+                    .keyboardShortcut("[", modifiers: .command)
+                    .help("Rotate the viewfinder image counter-clockwise (⌘[). Display only.")
+                Button { settings.rotation = (settings.rotation + 1) % 4 } label: { Image(systemName: "rotate.right") }
+                    .keyboardShortcut("]", modifiers: .command)
+                    .help("Rotate the viewfinder image clockwise (⌘]). Display only.")
                 Button(model.stackOpen ? "Stop stack" : "Start stack") { model.toggleStack() }
                     .disabled(!connected || settings.mode != .capture)
                     .help("Writes a black marker photo into the destination folder. Press again to close the stack.")
@@ -116,11 +123,12 @@ struct ControlsView: View {
 
 struct ContentView: View {
     @ObservedObject var model: CameraModel
+    @ObservedObject var settings: AppSettings
     let showClock = CommandLine.arguments.contains("--clock")
     var body: some View {
         VStack(spacing: 0) {
-            FrameViewRepresentable(view: model.frameView)
-                .frame(minWidth: 640, minHeight: 480)
+            FrameViewRepresentable(view: model.frameView, quarterTurns: settings.rotation)
+                .frame(minWidth: 360, minHeight: 360)
                 .overlay(alignment: .topLeading) { if showClock { ClockOverlay() } }
                 .overlay {
                     if model.state != .connected {
@@ -230,7 +238,7 @@ struct ViewfinderApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     var body: some Scene {
         WindowGroup("Viewfinder") {
-            ContentView(model: delegate.model)
+            ContentView(model: delegate.model, settings: delegate.model.settings)
         }
         Settings {
             SettingsView(model: delegate.model, settings: delegate.model.settings)

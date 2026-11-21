@@ -12,12 +12,16 @@ final class AppSettings: ObservableObject {
     /// Description written into each photo (kept until edited).
     @Published var photoDescription: String { didSet { defaults.set(photoDescription, forKey: "photoDescription") } }
 
+    /// Display rotation of the viewfinder in clockwise quarter turns (0...3). Remembered.
+    @Published var rotation: Int { didSet { defaults.set(rotation, forKey: "rotation") } }
+
     /// `defaults` is replaced by a throwaway suite in `--autotest` runs so real preferences are untouched.
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         mode = CaptureMode(rawValue: defaults.string(forKey: "mode") ?? "") ?? .exploring
         destinationPath = defaults.string(forKey: "destinationPath") ?? ""
         photoDescription = defaults.string(forKey: "photoDescription") ?? ""
+        rotation = ((defaults.integer(forKey: "rotation") % 4) + 4) % 4
     }
 
     var destinationURL: URL? {
