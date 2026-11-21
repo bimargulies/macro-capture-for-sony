@@ -83,7 +83,7 @@ public actor DeliveryPipeline {
             let placed = try place(staged, in: dir, named: name, createIfNeeded: false, exclusive: true)
             // The photo is delivered. The sidecar goes last; a failure here must not lose or re-send the photo.
             let sidecar = XMPSidecar.url(for: placed)
-            let warning = writeSidecar(XMPSidecar.make(description: context.description), to: sidecar)
+            let warning = await writeSidecar(XMPSidecar.make(description: context.description), to: sidecar)
             return DeliveryResult(url: placed, mode: .capture, cameraTime: cameraTime, warning: warning)
         }
     }
@@ -96,12 +96,12 @@ public actor DeliveryPipeline {
         let date = cameraTime ?? .local()
         let name = reserveName(in: dir, date: date)
         let placed = try place(file, in: dir, named: name, createIfNeeded: false, exclusive: true, keepSource: true)
-        let warning = writeSidecar(XMPSidecar.make(description: description), to: XMPSidecar.url(for: placed))
+        let warning = await writeSidecar(XMPSidecar.make(description: description), to: XMPSidecar.url(for: placed))
         return DeliveryResult(url: placed, mode: .capture, cameraTime: cameraTime, warning: warning)
     }
 
     /// Writes a black marker ARW (a stack boundary) into the destination, stamped `time` (camera clock).
-    public func deliverMarker(at time: NaiveTime, into dir: URL) throws -> URL {
+    public func deliverMarker(at time: NaiveTime, into dir: URL) async throws -> URL {
         try requireUsable(dir)
         let name = reserveName(in: dir, date: time)
         let target = dir.appendingPathComponent(name)
@@ -111,7 +111,7 @@ public actor DeliveryPipeline {
             throw DeliveryError.io("Could not write the marker to \(dir.path): \(error.localizedDescription)")
         }
         let sidecar = XMPSidecar.url(for: target)
-        if let warning = writeSidecar(XMPSidecar.make(description: nil, marker: true), to: sidecar) {
+        if let warning = await writeSidecar(XMPSidecar.make(description: nil, marker: true), to: sidecar) {
             throw DeliveryError.io(warning)
         }
         return target
@@ -146,11 +146,11 @@ public actor DeliveryPipeline {
 
     /// Writes a sidecar, retrying a few times (a network share can fail transiently). Returns a warning
     /// message on failure instead of throwing: the ARW is already in place by then.
-    private func writeSidecar(_ data: Data, to url: URL) -> String? {
+    private func writeSidecar(_ data: Data, to url: URL) async -> String? {
         var last: Error?
         for attempt in 0..<3 {
             do { try writeAtomically(data, to: url); return nil }
-            catch { last = error; if attempt < 2 { Thread.sleep(forTimeInterval: 0.5) } }
+            catch { last = error; if attempt < 2 { try? await Task.sleep(nanoseconds: 500_000_000) } }
         }
         return "\(url.deletingPathExtension().lastPathComponent).ARW was delivered but its sidecar could not be written (\(last?.localizedDescription ?? "unknown error")). The importer will wait for it."
     }

@@ -1,0 +1,22 @@
+# Keep the signal; drop style rules that only produce noise for this code base.
+included:
+  - Sources
+  - Tests
+disabled_rules:
+  - identifier_name        # short names (r, t, f) are fine in small scopes
+  - function_body_length
+  - type_body_length
+  - file_length
+  - cyclomatic_complexity
+  - trailing_comma
+  - todo
+  - statement_position
+  - optional_data_string_conversion
+  - large_tuple
+  - legacy_swiftui_aspect_ratio
+  - vertical_whitespace
+line_length:
+  warning: 200
+  error: 220
+force_cast: warning
+force_try: error

@@ -3,6 +3,17 @@ import CCameraShim
 import CaptureCore
 import Foundation
 
+/// A value shared between threads, guarded by a lock.
+final class Locked<T> {
+    private var stored: T
+    private let lock = NSLock()
+    init(_ value: T) { stored = value }
+    var value: T {
+        get { lock.lock(); defer { lock.unlock() }; return stored }
+        set { lock.lock(); stored = newValue; lock.unlock() }
+    }
+}
+
 /// A shutter press whose photo has not been delivered yet.
 private struct PendingShot {
     let id = UUID()
@@ -75,7 +86,13 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
     // Connect/disconnect and shutter work runs on serial queues, never on an SDK callback thread.
     private let ctl = DispatchQueue(label: "camera.control")
     private let shutterQueue = DispatchQueue(label: "camera.shutter")
-    fileprivate var wantConnected = true
+    private let wantConnectedBox = Locked(true)
+    fileprivate var wantConnected: Bool {
+        get { wantConnectedBox.value }
+        set { wantConnectedBox.value = newValue }
+    }
+    /// True while the camera is connected; safe to read from any queue (unlike `state`, which is main-thread only).
+    private let connectedBox = Locked(false)
     private var recovering = false
 
     /// `isolatedDefaults`: use a throwaway preferences suite (for `--autotest`).
@@ -127,6 +144,7 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
     }
 
     private func setStatus(_ message: String, _ newState: CameraBridgeState) {
+        connectedBox.value = newState == .connected
         DispatchQueue.main.async {
             self.status = message
             self.state = newState
@@ -197,15 +215,19 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
     /// The camera can drop out of magnification by itself (after a reconnect, or around shooting).
     /// The chosen power is the user's intent, so put it back whenever the camera disagrees.
     private func startMagnifierWatch() {
-        magQueue.asyncAfter(deadline: .now() + 2) { [weak self] in
+        // Runs on the main thread (where the UI state lives); only the camera read happens on magQueue.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             guard let self, self.wantConnected else { return }
             self.magLock.lock(); let busy = self.magWanted != nil; self.magLock.unlock()
             if self.state == .connected && !busy {
                 let desired = self.magnifierRatio
-                let actual = self.bridge.currentMagnifierRatio()
-                if actual >= 0 && UInt32(actual) != desired {
+                let c = self.magnifierCenter
+                self.magQueue.async {
+                    let actual = self.bridge.currentMagnifierRatio()
+                    guard actual >= 0, UInt32(actual) != desired else { return }
+                    self.magLock.lock(); let newer = self.magWanted != nil; self.magLock.unlock()
+                    if newer { return }  // the user just changed it; do not fight that
                     print("magnifier: camera at \(actual), wanted \(desired); restoring")
-                    let c = self.magnifierCenter
                     try? self.bridge.setMagnifierRatio(desired, x: Int32((c.x * 639).rounded()), y: Int32((c.y * 479).rounded()))
                 }
             }
@@ -222,7 +244,7 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
     private func startExposureWatch() {
         exposureQueue.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self, self.wantConnected else { return }
-            if self.state == .connected {
+            if self.connectedBox.value {
                 let raw = self.bridge.readExposure()
                 if !self.exposureLogged && !raw.isEmpty {
                     self.exposureLogged = true

@@ -37,15 +37,16 @@ final class ViewerModel: ObservableObject {
 
     var selected: ExploreItem? { items.first { $0.id == selectedID } }
 
-    private var capturedNames: Set<String> {
-        get { Set(defaults.stringArray(forKey: "capturedExplores") ?? []) }
-        set { defaults.set(Array(newValue).suffix(500), forKey: "capturedExplores") }
+    /// Names of photos already captured, oldest first (kept to the most recent 500).
+    private var capturedNames: [String] {
+        get { defaults.stringArray(forKey: "capturedExplores") ?? [] }
+        set { defaults.set(Array(newValue.suffix(500)), forKey: "capturedExplores") }
     }
 
     /// Re-reads the folder. `selectNewest` is used when a new photo has just arrived.
     func reload(selectNewest: Bool = false) {
         library.prune(keep: Self.keep)
-        let captured = capturedNames
+        let captured = Set(capturedNames)
         let old = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
         items = library.items().map { url in
             var item = old[url.lastPathComponent] ?? ExploreItem(url: url, thumbnail: nil, captured: false)
@@ -94,7 +95,7 @@ final class ViewerModel: ObservableObject {
     }
 
     func markCaptured(_ id: String) {
-        capturedNames.insert(id)
+        if !capturedNames.contains(id) { capturedNames.append(id) }
         if let i = items.firstIndex(where: { $0.id == id }) { items[i].captured = true }
     }
 

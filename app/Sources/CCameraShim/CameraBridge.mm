@@ -1,11 +1,18 @@
 #import "CameraBridge.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdarg>
+#include <cstring>
 #include <ctime>
 #include <chrono>
 #include <future>
+#include <iterator>
+#include <memory>
 #include <mutex>
+#include <shared_mutex>
+#include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -51,34 +58,51 @@ static uint64_t Fnv1a(const unsigned char *p, size_t n) {
 @end
 
 namespace {
+// The SDK hands out objects that must be released through their own Release(); own them with unique_ptr.
+struct InfoRelease { void operator()(SCRSDK::ICrCameraObjectInfo *p) const { if (p) p->Release(); } };
+struct EnumRelease { void operator()(SCRSDK::ICrEnumCameraObjectInfo *p) const { if (p) p->Release(); } };
+
 class Callback : public SCRSDK::IDeviceCallback {
 public:
     __weak CameraBridge *owner = nil;
-    void OnConnected(SCRSDK::DeviceConnectionVersioin) override { WallLog("SDK OnConnected"); [owner sdkConnected]; }
-    void OnDisconnected(CrInt32u e) override { WallLog("SDK OnDisconnected error=0x%x", e); [owner sdkDisconnected:e]; }
-    void OnError(CrInt32u e) override { WallLog("SDK OnError 0x%x", e); [owner sdkError:e]; }
+    // These run on SDK threads, which have no autorelease pool of their own.
+    void OnConnected(SCRSDK::DeviceConnectionVersioin) override { @autoreleasepool { WallLog("SDK OnConnected"); [owner sdkConnected]; } }
+    void OnDisconnected(CrInt32u e) override { @autoreleasepool { WallLog("SDK OnDisconnected error=0x%x", e); [owner sdkDisconnected:e]; } }
+    void OnError(CrInt32u e) override { @autoreleasepool { WallLog("SDK OnError 0x%x", e); [owner sdkError:e]; } }
     void OnCompleteDownload(CrChar *filename, CrInt32u) override {
-        WallLog("SDK OnCompleteDownload %s", filename);
-        [owner sdkDownloaded:[NSString stringWithUTF8String:(const char *)filename]];
+        @autoreleasepool {
+            // stringWithUTF8String: returns nil for a null or non-UTF-8 name; never pass that on.
+            NSString *path = filename ? [NSString stringWithUTF8String:reinterpret_cast<const char *>(filename)] : nil;
+            WallLog("SDK OnCompleteDownload %s", path ? path.UTF8String : "(unreadable file name)");
+            if (path) [owner sdkDownloaded:path];
+        }
     }
     void OnWarning(CrInt32u w) override {
-        WallLog("SDK OnWarning 0x%x%s", w, w == SCRSDK::CrWarning_Connect_Reconnecting ? " (Reconnecting)" : w == SCRSDK::CrWarning_Connect_Reconnected ? " (Reconnected)" : "");
-        [owner sdkWarning:w];
+        @autoreleasepool {
+            WallLog("SDK OnWarning 0x%x%s", w, w == SCRSDK::CrWarning_Connect_Reconnecting ? " (Reconnecting)" : w == SCRSDK::CrWarning_Connect_Reconnected ? " (Reconnected)" : "");
+            [owner sdkWarning:w];
+        }
     }
     void OnWarningExt(CrInt32u w, CrInt32 a, CrInt32 b, CrInt32 c) override { WallLog("SDK OnWarningExt 0x%x %d %d %d", w, a, b, c); }
 };
 } // namespace
 
 @implementation CameraBridge {
-    Callback _cb;
+    Callback _cb;   // the SDK keeps a raw pointer to this; it outlives ReleaseDevice (see teardown)
     int64_t _dev;
-    SCRSDK::ICrEnumCameraObjectInfo *_enum;
-    bool _inited;
+    std::unique_ptr<SCRSDK::ICrEnumCameraObjectInfo, EnumRelease> _enum;
+    std::unique_ptr<SCRSDK::ICrCameraObjectInfo, InfoRelease> _usbInfo;
     std::atomic<bool> _connected;
     std::atomic<bool> _stop;
     std::thread _poller;
-    std::mutex _mu;
-    std::promise<void> *_promise;
+    // Every call into the SDK holds _devLock shared; Connect, Disconnect and ReleaseDevice hold it
+    // exclusive, so a device can never be released while another thread is using it.
+    std::shared_mutex _devLock;
+    std::mutex _mu;                              // guards _promise, _model, _transferNote
+    std::shared_ptr<std::promise<void>> _promise;
+    std::string _savePath, _savePrefix;          // the SDK may keep pointers to these; owned here
+    int _lastLiveState;
+    bool _loggedFirstFrame;
     NSString *_model;
     NSString *_transferNote;
 }
@@ -86,7 +110,7 @@ public:
 - (instancetype)init {
     if ((self = [super init])) {
         _cb.owner = self;
-        _dev = 0; _enum = nullptr; _inited = false; _promise = nullptr;
+        _dev = 0; _lastLiveState = -1; _loggedFirstFrame = false;
         _connected = false; _stop = false;
     }
     return self;
@@ -94,8 +118,8 @@ public:
 
 - (void)dealloc { [self disconnect]; }
 
-- (NSString *)modelName { return _model; }
-- (NSString *)transferNote { return _transferNote; }
+- (NSString *)modelName { std::lock_guard<std::mutex> l(_mu); return _model; }
+- (NSString *)transferNote { std::lock_guard<std::mutex> l(_mu); return _transferNote; }
 - (BOOL)isConnected { return _connected; }
 
 #pragma mark SDK callbacks
@@ -105,7 +129,7 @@ public:
     if (!_promise) return;
     if (ok) _promise->set_value();
     else _promise->set_exception(std::make_exception_ptr(std::runtime_error("sdk error")));
-    _promise = nullptr;
+    _promise.reset();
 }
 
 - (void)sdkConnected {
@@ -142,6 +166,20 @@ public:
 
 #pragma mark Connect / disconnect
 
+/// Arms a one-shot signal that the next OnConnected/OnDisconnected/OnError will fulfil.
+- (std::future<void>)armSignal {
+    auto p = std::make_shared<std::promise<void>>();
+    std::future<void> f = p->get_future();
+    std::lock_guard<std::mutex> l(_mu);
+    _promise = std::move(p);
+    return f;
+}
+
+- (void)disarmSignal {
+    std::lock_guard<std::mutex> l(_mu);
+    _promise.reset();
+}
+
 - (BOOL)connectWithError:(NSError **)outError {
     g_t0 = NowNanos();
     if (_dev) { if (outError) *outError = MakeError(@"already connected"); return NO; }
@@ -152,53 +190,65 @@ public:
     TLOG("Init done");
 
     SCRSDK::CrError err = 0;
-    SCRSDK::ICrCameraObjectInfo *info = nullptr;
+    SCRSDK::ICrCameraObjectInfo *info = nullptr;   // not owned: points into _enum or _usbInfo
     const char *serial = getenv("CAM_SERIAL");  // experiment: skip slow enumeration (USB only)
     if (serial && *serial) {
-        err = SCRSDK::CreateCameraObjectInfoUSBConnection(&info, SCRSDK::CrCameraDeviceModel_ILCE_7RM5, (CrInt8u *)serial);
+        std::string serialCopy(serial);             // the SDK wants a mutable buffer
+        SCRSDK::ICrCameraObjectInfo *raw = nullptr;
+        err = SCRSDK::CreateCameraObjectInfoUSBConnection(&raw, SCRSDK::CrCameraDeviceModel_ILCE_7RM5,
+                                                          reinterpret_cast<CrInt8u *>(serialCopy.data()));
+        _usbInfo.reset(raw);
         TLOG("CreateCameraObjectInfoUSBConnection returned");
-        if (err || !info) {
+        if (err || !_usbInfo) {
             if (outError) *outError = MakeError([NSString stringWithFormat:@"USB camera object failed (0x%x)", err]);
             [self teardown];
             return NO;
         }
+        info = _usbInfo.get();
+        std::lock_guard<std::mutex> l(_mu);
         _model = @"ILCE-7RM5";
     } else {
-        err = SCRSDK::EnumCameraObjects(&_enum, 3);
+        SCRSDK::ICrEnumCameraObjectInfo *raw = nullptr;
+        err = SCRSDK::EnumCameraObjects(&raw, 3);
+        _enum.reset(raw);
         TLOG("EnumCameraObjects returned");
         if (err || !_enum || _enum->GetCount() < 1) {
             if (outError) *outError = MakeError([NSString stringWithFormat:@"No camera found (0x%x). Is it on, in PC Remote mode, and not held by another app?", err]);
             [self teardown];
             return NO;
         }
+        // Connect() takes a non-const pointer; the object is still owned by _enum.
         info = const_cast<SCRSDK::ICrCameraObjectInfo *>(_enum->GetCameraObjectInfo(0));
-        _model = [NSString stringWithUTF8String:(const char *)info->GetModel()];
-        const char *sn = (const char *)info->GetId();
-        fprintf(stderr, "camera id (usable as CAM_SERIAL): %.*s\n", (int)info->GetIdSize(), sn);
+        NSString *model = [NSString stringWithUTF8String:reinterpret_cast<const char *>(info->GetModel())];
+        { std::lock_guard<std::mutex> l(_mu); _model = model; }
+        fprintf(stderr, "camera id (usable as CAM_SERIAL): %.*s\n", (int)info->GetIdSize(), reinterpret_cast<const char *>(info->GetId()));
     }
 
-    std::promise<void> p;
-    std::future<void> f = p.get_future();
-    { std::lock_guard<std::mutex> l(_mu); _promise = &p; }
+    std::future<void> f = [self armSignal];
 
     TLOG("calling Connect");
-    err = SCRSDK::Connect(info, &_cb, &_dev, SCRSDK::CrSdkControlMode_Remote,
-                         SCRSDK::CrReconnecting_ON);
+    {
+        std::unique_lock<std::shared_mutex> lock(_devLock);
+        err = SCRSDK::Connect(info, &_cb, &_dev, SCRSDK::CrSdkControlMode_Remote, SCRSDK::CrReconnecting_ON);
+    }
     if (err) {
-        { std::lock_guard<std::mutex> l(_mu); _promise = nullptr; }
+        [self disarmSignal];
         if (outError) *outError = MakeError([NSString stringWithFormat:@"Connect failed (0x%x)", err]);
         [self teardown];
         return NO;
     }
     if (f.wait_for(std::chrono::seconds(10)) != std::future_status::ready) {
-        { std::lock_guard<std::mutex> l(_mu); _promise = nullptr; }
+        [self disarmSignal];
         if (outError) *outError = MakeError(@"Connection timed out. Quit other apps that use the camera (e.g. Adobe Bridge) and retry.");
+        // The connection may still complete after we give up; close it so the camera is not left holding a session.
+        [self closeSession];
         [self teardown];
         return NO;
     }
     TLOG("OnConnected received");
     try { f.get(); } catch (...) {
         if (outError) *outError = MakeError(@"Camera refused the connection (is another app or session holding it?)");
+        [self closeSession];
         [self teardown];
         return NO;
     }
@@ -208,6 +258,8 @@ public:
     [self ensurePCTransfer];
     TLOG("settle done, starting poller");
     _stop = false;
+    _lastLiveState = -1;
+    _loggedFirstFrame = false;
     __weak CameraBridge *weakSelf = self;
     _poller = std::thread([weakSelf] { [weakSelf pollLoop]; });
     return YES;
@@ -215,7 +267,9 @@ public:
 
 - (void)pollLoop {
     SCRSDK::CrImageInfo ii;
-    if (SCRSDK::GetLiveViewImageInfo(_dev, &ii)) {
+    SCRSDK::CrError infoErr;
+    { std::shared_lock<std::shared_mutex> lock(_devLock); infoErr = _dev ? SCRSDK::GetLiveViewImageInfo(_dev, &ii) : SCRSDK::CrError_Generic_Unknown; }
+    if (infoErr) {
         [self.delegate cameraBridge:self didChangeState:CameraBridgeStateDisconnected message:@"GetLiveViewImageInfo failed"];
         return;
     }
@@ -225,15 +279,18 @@ public:
         SCRSDK::CrImageDataBlock blk;
         blk.SetData(buf.data());
         blk.SetSize((CrInt32u)buf.size());
-        SCRSDK::CrError e = SCRSDK::GetLiveViewImage(_dev, &blk);
+        SCRSDK::CrError e;
+        {
+            std::shared_lock<std::shared_mutex> lock(_devLock);
+            if (!_dev) break;
+            e = SCRSDK::GetLiveViewImage(_dev, &blk);
+        }
         uint64_t t = NowNanos();
-        static int lastState = -1;  // 0 ok, else error code + 1
-        int state = (e || blk.GetImageSize() == 0) ? (int)e + 1 : 0;
-        if (state != lastState) { WallLog("live view %s (err=0x%x)", state == 0 ? "OK" : "FAILING", (unsigned)e); lastState = state; }
+        int state = (e || blk.GetImageSize() == 0) ? (int)e + 1 : 0;  // 0 ok, else error code + 1
+        if (state != _lastLiveState) { WallLog("live view %s (err=0x%x)", state == 0 ? "OK" : "FAILING", (unsigned)e); _lastLiveState = state; }
         if (!e && blk.GetImageSize() > 0) {
             uint64_t h = Fnv1a((const unsigned char *)blk.GetImageData(), blk.GetImageSize());
-            static bool first = true;
-            if (first) { first = false; TLOG("first live-view frame fetched"); }
+            if (!_loggedFirstFrame) { _loggedFirstFrame = true; TLOG("first live-view frame fetched"); }
             if (h != lastHash) {  // the SDK returns its cached frame until a new one arrives
                 lastHash = h;
                 @autoreleasepool {
@@ -248,6 +305,7 @@ public:
 
 #pragma mark Shooting
 
+// getProperty/setProperty do not lock: callers hold _devLock (shared).
 - (BOOL)getProperty:(CrInt32u)code into:(SCRSDK::CrDeviceProperty &)out {
     CrInt32u c = code;
     CrInt32 n = 0;
@@ -268,7 +326,8 @@ public:
 
 /// Photos only reach the Mac if the camera's save destination includes the host PC.
 - (void)ensurePCTransfer {
-    _transferNote = nil;
+    { std::lock_guard<std::mutex> l(_mu); _transferNote = nil; }
+    std::shared_lock<std::shared_mutex> lock(_devLock);
     SCRSDK::CrDeviceProperty p;
     if (![self getProperty:SCRSDK::CrDeviceProperty_StillImageStoreDestination into:p]) return;
     uint64_t cur = p.GetCurrentValue();
@@ -276,20 +335,28 @@ public:
     if (cur == SCRSDK::CrStillImageStoreDestination_MemoryCard) {
         SCRSDK::CrError e = [self setProperty:SCRSDK::CrDeviceProperty_StillImageStoreDestination
                                         value:SCRSDK::CrStillImageStoreDestination_HostPCAndMemoryCard];
-        _transferNote = e ? [NSString stringWithFormat:@"Camera saves to the card only and could not be switched (0x%x); photos will not reach this Mac.", e]
+        NSString *note = e ? [NSString stringWithFormat:@"Camera saves to the card only and could not be switched (0x%x); photos will not reach this Mac.", e]
                           : @"Camera was saving to the card only; switched it to Mac and card.";
-        WallLog("%s", _transferNote.UTF8String);
+        { std::lock_guard<std::mutex> l(_mu); _transferNote = note; }
+        WallLog("%s", note.UTF8String);
     }
 }
 
 - (BOOL)setSaveFolder:(NSString *)path error:(NSError **)outError {
+    const char *utf8 = path.UTF8String;
+    if (!utf8) { if (outError) *outError = MakeError(@"The save folder path is not valid text."); return NO; }
+    std::unique_lock<std::shared_mutex> lock(_devLock);   // exclusive: it rewrites buffers the SDK may read
     if (!_dev) { if (outError) *outError = MakeError(@"not connected"); return NO; }
-    SCRSDK::CrError e = SCRSDK::SetSaveInfo(_dev, (CrChar *)path.UTF8String, (CrChar *)"SHOT", -1);
+    _savePath = utf8;                  // mutable copies owned by the bridge
+    _savePrefix = "SHOT";
+    SCRSDK::CrError e = SCRSDK::SetSaveInfo(_dev, reinterpret_cast<CrChar *>(_savePath.data()),
+                                            reinterpret_cast<CrChar *>(_savePrefix.data()), -1);
     if (e) { if (outError) *outError = MakeError([NSString stringWithFormat:@"SetSaveInfo failed (0x%x)", e]); return NO; }
     return YES;
 }
 
 - (BOOL)setHalfPress:(BOOL)pressed error:(NSError **)outError {
+    std::shared_lock<std::shared_mutex> lock(_devLock);
     if (!_dev || !_connected) { if (outError) *outError = MakeError(@"Camera not connected"); return NO; }
     SCRSDK::CrError e = [self setProperty:SCRSDK::CrDeviceProperty_S1
                                     value:pressed ? SCRSDK::CrLockIndicator_Locked : SCRSDK::CrLockIndicator_Unlocked];
@@ -299,6 +366,7 @@ public:
 
 - (NSArray<NSNumber *> *)magnifierRatios {
     NSMutableArray<NSNumber *> *out = [NSMutableArray array];
+    std::shared_lock<std::shared_mutex> lock(_devLock);
     if (!_dev || !_connected) return out;
     SCRSDK::CrDeviceProperty p;
     if (![self getProperty:SCRSDK::CrDeviceProperty_Focus_Magnifier_Setting into:p]) return out;
@@ -309,7 +377,7 @@ public:
         case 0x03: case 0x13: width = 4; break;
         default: width = 8; break;
     }
-    const CrInt8u *data = p.GetSetValues();
+    const CrInt8u *data = p.GetSetValues();   // owned by p, valid while p lives
     CrInt32u bytes = p.GetSetValueSize();
     for (size_t i = 0; data && i + width <= bytes; i += width) {
         uint64_t v = 0;
@@ -330,12 +398,13 @@ const unsigned CameraBridgePropExposureProgram = SCRSDK::CrDeviceProperty_Exposu
 
 - (NSDictionary<NSNumber *, NSNumber *> *)readExposure {
     NSMutableDictionary *out = [NSMutableDictionary dictionary];
+    std::shared_lock<std::shared_mutex> lock(_devLock);
     if (!_dev || !_connected) return out;
     CrInt32u codes[] = { CameraBridgePropFNumber, CameraBridgePropShutterSpeed, CameraBridgePropISO,
                          CameraBridgePropExposureBias, CameraBridgePropMeteredManual, CameraBridgePropExposureProgram };
     CrInt32 n = 0;
     SCRSDK::CrDeviceProperty *list = nullptr;
-    SCRSDK::CrError err = SCRSDK::GetSelectDeviceProperties(_dev, 6, codes, &list, &n);
+    SCRSDK::CrError err = SCRSDK::GetSelectDeviceProperties(_dev, static_cast<CrInt32>(std::size(codes)), codes, &list, &n);
     if (!err && list) {
         for (CrInt32 i = 0; i < n; i++) out[@(list[i].GetCode())] = @(list[i].GetCurrentValue());
     }
@@ -344,6 +413,7 @@ const unsigned CameraBridgePropExposureProgram = SCRSDK::CrDeviceProperty_Exposu
 }
 
 - (int)currentMagnifierRatio {
+    std::shared_lock<std::shared_mutex> lock(_devLock);
     if (!_dev || !_connected) return -1;
     SCRSDK::CrDeviceProperty p;
     if (![self getProperty:SCRSDK::CrDeviceProperty_Focus_Magnifier_Setting into:p]) return -1;
@@ -352,6 +422,7 @@ const unsigned CameraBridgePropExposureProgram = SCRSDK::CrDeviceProperty_Exposu
 }
 
 - (BOOL)setMagnifierRatio:(uint32_t)ratio x:(int)x y:(int)y error:(NSError **)outError {
+    std::shared_lock<std::shared_mutex> lock(_devLock);
     if (!_dev || !_connected) { if (outError) *outError = MakeError(@"Camera not connected"); return NO; }
     x = std::max(0, std::min(639, x));
     y = std::max(0, std::min(479, y));
@@ -362,6 +433,7 @@ const unsigned CameraBridgePropExposureProgram = SCRSDK::CrDeviceProperty_Exposu
 }
 
 - (BOOL)fullPressWithError:(NSError **)outError {
+    std::shared_lock<std::shared_mutex> lock(_devLock);
     if (!_dev || !_connected) { if (outError) *outError = MakeError(@"Camera not connected"); return NO; }
     SCRSDK::CrError e = SCRSDK::SendCommand(_dev, SCRSDK::CrCommandId_Release, SCRSDK::CrCommandParam_Down);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -370,8 +442,24 @@ const unsigned CameraBridgePropExposureProgram = SCRSDK::CrDeviceProperty_Exposu
     return YES;
 }
 
+/// Asks the camera to end the session and waits briefly for it to confirm.
+- (void)closeSession {
+    if (!_dev) return;
+    std::future<void> f = [self armSignal];
+    {
+        std::unique_lock<std::shared_mutex> lock(_devLock);
+        SCRSDK::Disconnect(_dev);
+    }
+    f.wait_for(std::chrono::seconds(3));
+    [self disarmSignal];
+}
+
+/// Releases everything the SDK gave us. The callback object `_cb` is a member, so it is still alive for
+/// any late callback until the object itself is destroyed, which happens after this.
 - (void)teardown {
-    if (_enum) { _enum->Release(); _enum = nullptr; }
+    std::unique_lock<std::shared_mutex> lock(_devLock);
+    _enum.reset();
+    _usbInfo.reset();
     if (_dev) { SCRSDK::ReleaseDevice(_dev); _dev = 0; }
 }
 
@@ -382,14 +470,7 @@ const unsigned CameraBridgePropExposureProgram = SCRSDK::CrDeviceProperty_Exposu
 - (void)disconnect {
     _stop = true;
     if (_poller.joinable()) _poller.join();
-    if (_connected) {
-        std::promise<void> p;
-        std::future<void> f = p.get_future();
-        { std::lock_guard<std::mutex> l(_mu); _promise = &p; }
-        SCRSDK::Disconnect(_dev);
-        f.wait_for(std::chrono::seconds(3));
-        { std::lock_guard<std::mutex> l(_mu); _promise = nullptr; }
-    }
+    if (_connected) [self closeSession];
     [self teardown];
 }
 

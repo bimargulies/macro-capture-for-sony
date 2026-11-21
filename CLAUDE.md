@@ -19,6 +19,13 @@ See [PLAN.md](PLAN.md) for the plan, open items, and the full background and rat
 - Build the signed app: `cd app && ./bundle.sh` (signs with the "Capture Dev" keychain identity when present, else ad hoc; a stable identity keeps Little Snitch rules valid across rebuilds) (needs `brew install exiftool` so it can be bundled).
 - Hardware test (camera on, Adobe Bridge quit, manual focus, 3 real shots into a scratch folder): `app/build/Capture\ Viewfinder.app/Contents/MacOS/Viewfinder --autotest <folder>`.
 
+## Linting
+
+- Swift: `cd app && swiftlint lint` (config in `app/.swiftlint.yml`).
+- C++/Objective-C++ shim: `cd app && /opt/homebrew/opt/llvm/bin/clang-tidy Sources/CCameraShim/CameraBridge.mm -- -x objective-c++ -std=c++17 -fobjc-arc -isysroot "$(xcrun --show-sdk-path)" -ISources/CCameraShim/include -Isdk/app/CRSDK` (config in `app/.clang-tidy`). cppcheck does not understand Objective-C++.
+- Races: `cd app && swift test --sanitize=thread` (covers CaptureCore only; the camera code needs a hardware run).
+- Shim rules: no owning raw pointers (use `unique_ptr`/`shared_ptr` with the SDK's `Release()` as deleter); every SDK call holds `_devLock` shared, and Connect/Disconnect/ReleaseDevice hold it exclusive.
+
 ## Rules
 
 - Never modify an ARW. Every delivered `CAP-` ARW gets a sidecar `.xmp` (description, if any) written AFTER the ARW; the importer waits for it. Markers are stamped previous-item time + 1 ms (no clock sync) and carry a marker keyword in their sidecar. Never write ARW metadata with Exiv2 (it destroys Sony's private data; see PLAN.md).
