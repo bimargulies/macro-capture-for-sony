@@ -433,3 +433,10 @@ Offline experiment on a real A7R V photo (the ARW's embedded 8448x6336 JPEG), si
 ## To do when the camera is back on
 
 `spike/cli/focusprobe.cpp` (built, not yet run: the camera had powered off) will: list the magnifier's possible ratios and the other focus properties, save baseline live-view frames, try the smallest and largest magnifier ratio at the frame centre (saving frames), fetch the OSD image, and restore every setting it changed (verified by read-back). Then decide whether to build option 2.
+
+### Focus probe results (camera run, 2026-11-21)
+
+- A7R V accepts `Focus_Magnifier_Setting` remotely. Settable ratio codes: 0xa (x1.0), 0x2f (x5.4?), 0x5d (x9.3), plus off. Setting x9.3 at the centre gave live-view frames of 1024x680 (vs 1024x768) showing a clearly magnified centre region; read-back confirmed; original value restored.
+- `FocusMagnificationTime`, `OSDImageMode`, `PeakingDisplay` not readable. `FocusIndication` readable but read-only.
+- So option 2 (peaking/focus score on a magnified live view) is mechanically feasible. Open: whether magnified frames carry native-resolution detail (test with a well-lit, textured subject; the test scene was very dark and the centre was featureless), and the frame rate while magnified.
+- Probe saves: base_*.jpg, mag_x1_*.jpg, mag_x9_*.jpg.
