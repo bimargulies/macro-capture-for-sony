@@ -79,16 +79,6 @@ struct ControlsView: View {
             }
 
             HStack(spacing: 12) {
-                Picker("View", selection: $model.showViewer) {
-                    Text("Viewfinder").tag(false)
-                    Text("Viewer").tag(true)
-                }
-                .pickerStyle(.segmented).frame(width: 170).labelsHidden()
-                .help("Switch between the live viewfinder (⌘1) and the photos you have explored (⌘2)")
-                Button("") { model.showViewer = false }.keyboardShortcut("1", modifiers: .command)
-                    .frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
-                Button("") { model.showViewer = true }.keyboardShortcut("2", modifiers: .command)
-                    .frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
                 HalfPressButton(model: model)
                 Button("Shutter") { model.shoot() }
                     .keyboardShortcut(.return, modifiers: .command)
@@ -153,9 +143,34 @@ struct ContentView: View {
     let showClock = CommandLine.arguments.contains("--clock")
     var body: some View {
         VStack(spacing: 0) {
-            FrameViewRepresentable(view: model.frameView, quarterTurns: settings.rotation, hidden: model.showViewer)
+            HStack {
+                Spacer()
+                Picker("View", selection: $model.showViewer) {
+                    Text("Capture").tag(false)
+                    Text("Viewer").tag(true)
+                }
+                .pickerStyle(.segmented).frame(width: 200).labelsHidden()
+                .help("Switch between the live view with the camera controls (⌘1) and the photos you have explored (⌘2)")
+                Button("") { model.showViewer = false }.keyboardShortcut("1", modifiers: .command)
+                    .frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
+                Button("") { model.showViewer = true }.keyboardShortcut("2", modifiers: .command)
+                    .frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
+                Spacer()
+            }
+            .padding(6)
+            Divider()
+            if model.showViewer {
+                ViewerView(model: model, viewer: model.viewer, settings: settings)
+            } else {
+                captureTab
+            }
+        }
+    }
+
+    private var captureTab: some View {
+        VStack(spacing: 0) {
+            FrameViewRepresentable(view: model.frameView, quarterTurns: settings.rotation, hidden: false)
                 .frame(minWidth: 360, minHeight: 360)
-                .overlay { if model.showViewer { ViewerView(model: model, viewer: model.viewer) } }
                 .overlay(alignment: .topLeading) { if showClock { ClockOverlay() } }
                 .overlay {
                     if model.state != .connected {
@@ -281,6 +296,7 @@ struct ViewfinderApp: App {
 struct ViewerView: View {
     @ObservedObject var model: CameraModel
     @ObservedObject var viewer: ViewerModel
+    @ObservedObject var settings: AppSettings
 
     var body: some View {
         VStack(spacing: 0) {
@@ -313,6 +329,27 @@ struct ViewerView: View {
                     .help("Copy this photo to the destination folder, with the description (⌘K). The explored copy stays here.")
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
+            HStack {
+                Text("Description")
+                TextField("Saved with the photo when you capture it", text: $settings.photoDescription)
+                    .textFieldStyle(.roundedBorder)
+                if settings.destinationPath.isEmpty {
+                    Text("No destination folder (Settings, ⌘,)").foregroundColor(.red)
+                }
+            }
+            .padding(.horizontal, 10).padding(.bottom, 6)
+            if let err = model.errorMessage {
+                HStack(alignment: .top) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.red)
+                    Text(err).foregroundColor(.red).fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button("Dismiss") { model.errorMessage = nil }
+                }
+                .padding(.horizontal, 10).padding(.bottom, 6)
+            } else if !model.lastMessage.isEmpty {
+                Text(model.lastMessage).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
+                    .padding(.horizontal, 10).padding(.bottom, 6)
+            }
             Carousel(viewer: viewer)
         }
         .background(Color.black)
