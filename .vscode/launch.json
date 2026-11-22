@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:capture-for-fun-and-profit}/app",
+            "name": "Debug Viewfinder (app)",
+            "target": "Viewfinder",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug Viewfinder (app)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:capture-for-fun-and-profit}/app",
+            "name": "Release Viewfinder (app)",
+            "target": "Viewfinder",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release Viewfinder (app)"
+        }
+    ]
+}
