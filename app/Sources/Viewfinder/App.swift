@@ -243,6 +243,8 @@ struct SettingsView: View {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    // Stored properties initialize in order: this must stay above `model`, so a second copy exits before touching the SDK.
+    private let singleInstance: Void = SingleInstance.enforce()
     let model = CameraModel(isolatedDefaults: CommandLine.arguments.contains("--autotest"))
     private var sigSources: [DispatchSourceSignal] = []
 
