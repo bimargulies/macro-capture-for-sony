@@ -35,6 +35,8 @@ final class FrameView: NSView {
 
     /// Click at a point of the full picture, as fractions 0...1 of the unrotated image (origin top-left).
     var onClick: ((CGPoint) -> Void)?
+    /// Double-click at a point of the full picture, in the same coordinates. Follows the `onClick` of each click.
+    var onDoubleClick: ((CGPoint) -> Void)?
     private var imageSize = CGSize(width: 4, height: 3)
 
     /// The spot chosen by a click (gray corners). Kept until the next click.
@@ -151,6 +153,7 @@ final class FrameView: NSView {
         placed = f
         updateMarkers()
         onClick?(f)
+        if event.clickCount == 2 { onDoubleClick?(f) }
     }
 
     override func layout() {

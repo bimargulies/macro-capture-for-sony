@@ -112,6 +112,7 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
         bridge.delegate = self
         // A click only marks the spot; choosing a magnification then centres on it.
         frameView.onClick = { [weak self] p in self?.magnifierCenter = p }
+        frameView.onDoubleClick = { [weak self] p in self?.magnifyForDoubleClick(at: p) }
         frameView.onDisplayed = { [weak self] latency, decode, size in self?.record(latency, decode, size) }
         try? FileManager.default.createDirectory(at: AppFolders.staging, withIntermediateDirectories: true)
         viewer.reload()
@@ -178,6 +179,17 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
         magWanted = (ratio, x, y)
         magLock.unlock()
         if idle { magQueue.async { self.drainMagnifier() } }
+    }
+
+    /// Double-click on the viewfinder: magnify there at ×4.7, or the closest power the camera lists
+    /// (the list can differ from one lens or setting to another).
+    private func magnifyForDoubleClick(at point: CGPoint) {
+        let wanted = 47  // tenths, as the camera reports them
+        guard let ratio = magnifierRatios.min(by: { abs(Int($0) - wanted) < abs(Int($1) - wanted) }) else {
+            lastMessage = "The magnifier is not available yet."
+            return
+        }
+        setMagnifier(ratio: ratio, center: point)
     }
 
     private func drainMagnifier() {

@@ -98,11 +98,12 @@ struct ControlsView: View {
                 }
                 .pickerStyle(.segmented).frame(width: 190).labelsHidden()
                 .disabled(!connected || model.magnifierRatios.isEmpty)
-                .help("Focus magnifier. Click the picture to mark a spot (orange corners follow the mouse, gray corners stay), then choose a power to magnify there. Off or Esc to return.")
+                .help("Focus magnifier. Click the picture to mark a spot (orange corners follow the mouse, gray corners stay), then choose a power to magnify there. "
+                    + "Double-click the picture to mark a spot and magnify it at ×4.7. Off or Esc to return.")
                 Button("") { model.setMagnifier(ratio: 0) }
                     .keyboardShortcut(.escape, modifiers: [])
                     .frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
-                Button(model.stackOpen ? "Stop stack" : "Start stack") { model.toggleStack() }
+                Button(model.stackOpen ? "End stack" : "Begin stack") { model.toggleStack() }
                     .disabled(!connected || settings.mode != .capture)
                     .help("Writes a black marker photo into the destination folder. Press again to close the stack.")
                 if model.shotsInFlight > 0 {
