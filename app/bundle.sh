@@ -42,6 +42,7 @@ NOTICE
 EXIF_VER="$(env -i /usr/bin/perl "$APP/Contents/Resources/exiftool/exiftool" -ver)" || { echo "bundled ExifTool does not run" >&2; exit 1; }
 echo "bundled ExifTool $EXIF_VER"
 
+chmod -R u+w "$APP"   # Homebrew's ExifTool files are read-only, and xattr and codesign need to write
 xattr -cr "$APP"   # drop quarantine from the SDK copies
 install_name_tool -add_rpath @executable_path/../Frameworks "$APP/Contents/MacOS/Viewfinder"
 # Sign inside-out: libraries first, then the app.
