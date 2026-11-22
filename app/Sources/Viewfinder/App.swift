@@ -150,7 +150,7 @@ struct ContentView: View {
                     Text("Viewer").tag(true)
                 }
                 .pickerStyle(.segmented).frame(width: 200).labelsHidden()
-                .help("Switch between the live view with the camera controls (⌘1) and the photos you have explored (⌘2)")
+                .help("Switch between the live view with the camera controls (⌘1) and the photos you have explored (⌘2). In Exploring mode, Tab switches too.")
                 Button("") { model.showViewer = false }.keyboardShortcut("1", modifiers: .command)
                     .frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
                 Button("") { model.showViewer = true }.keyboardShortcut("2", modifiers: .command)
@@ -165,6 +165,7 @@ struct ContentView: View {
                 captureTab
             }
         }
+        .background(WindowPlacementAccessor())
     }
 
     private var captureTab: some View {
@@ -253,6 +254,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         model.start()
+        installTabSwitch()
 
         // Always release the camera session, even on Ctrl-C / kill.
         for sig in [SIGINT, SIGTERM] {
@@ -276,15 +278,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Tab flips between Capture and Viewer in Exploring mode. An event monitor, because a focused text
+    /// field would otherwise take the key to move focus.
+    private func installTabSwitch() {
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.shouldSwitchTabs(on: event) else { return event }
+            self.model.showViewer.toggle()
+            return nil
+        }
+    }
+
+    private func shouldSwitchTabs(on event: NSEvent) -> Bool {
+        let tabKeyCode: UInt16 = 48
+        guard event.keyCode == tabKeyCode,
+              event.modifierFlags.isDisjoint(with: [.shift, .control, .option, .command]),
+              model.settings.mode == .exploring,
+              !model.halfPressed,  // removing the capture tab would lose the half-press button's mouse-up
+              let window = event.window, window.title == ViewfinderApp.windowTitle, window.attachedSheet == nil
+        else { return false }
+        // Mid-composition (e.g. Japanese input), Tab belongs to the input method.
+        if let text = window.firstResponder as? NSTextView, text.hasMarkedText() { return false }
+        return true
+    }
+
     func applicationWillTerminate(_ notification: Notification) { model.shutdown() }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }
 
 @main
 struct ViewfinderApp: App {
+    static let windowTitle = "Macro Sony Capture"
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     var body: some Scene {
-        WindowGroup("Macro Sony Capture") {
+        WindowGroup(Self.windowTitle) {
             ContentView(model: delegate.model, settings: delegate.model.settings)
         }
         Settings {
