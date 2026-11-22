@@ -10,6 +10,7 @@ A macOS replacement for Sony's Imaging Edge, controlling the user's Sony A7R V (
 - The real app is in `app/` (SwiftPM, Swift + Objective-C++ shim). Build the bundle with `app/bundle.sh`; run `open "app/build/Macro Sony Capture.app"`.
 - Gotchas: never call the SDK's `Init()` twice in one process (crashes); always disconnect before exit; quit Adobe Bridge before running.
 - Sony SDK lives in `third_party/` (gitignored, license-restricted); never commit it.
+- Idea to try someday: wired Ethernet through a hub instead of USB. The SDK's compatibility table (v2.02.00) lists the A7R V for USB and wireless only, but the user has run this camera on wired Ethernet with Sony's app, so it may work. Untested with our app. To test: unplug USB, turn off SSH authentication on the camera (the shim passes no SSH credentials yet), and launch with `CAM_SERIAL` unset so enumeration finds it.
 
 See [PLAN.md](PLAN.md) for the plan, open items, and the full background and rationale.
 
