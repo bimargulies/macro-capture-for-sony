@@ -7,7 +7,7 @@ A macOS replacement for Sony's Imaging Edge, controlling the user's Sony A7R V (
 - GUI in Swift (SwiftUI/AppKit, Metal later if needed). SDK wrapped by an Objective-C++ shim.
 - Still images only; live view is a JPEG poll loop.
 - Phase 1 spike is done (see PLAN.md): live view 30 fps, auto-reconnect, manual rotate needed. Reference code is in `spike/`.
-- The real app is in `app/` (SwiftPM, Swift + Objective-C++ shim). Build the bundle with `app/bundle.sh`; run `open "app/build/Capture Viewfinder.app"`.
+- The real app is in `app/` (SwiftPM, Swift + Objective-C++ shim). Build the bundle with `app/bundle.sh`; run `open "app/build/Macro Sony Capture.app"`.
 - Gotchas: never call the SDK's `Init()` twice in one process (crashes); always disconnect before exit; quit Adobe Bridge before running.
 - Sony SDK lives in `third_party/` (gitignored, license-restricted); never commit it.
 
@@ -17,7 +17,7 @@ See [PLAN.md](PLAN.md) for the plan, open items, and the full background and rat
 
 - Unit tests (no camera needed): `cd app && swift test` (needs ExifTool installed for some tests).
 - Build the signed app: `cd app && ./bundle.sh` (signs with the "Capture Dev" keychain identity when present, else ad hoc; a stable identity keeps Little Snitch rules valid across rebuilds) (needs `brew install exiftool` so it can be bundled).
-- Hardware test (camera on, Adobe Bridge quit, manual focus, 3 real shots into a scratch folder): `app/build/Capture\ Viewfinder.app/Contents/MacOS/Viewfinder --autotest <folder>`.
+- Hardware test (camera on, Adobe Bridge quit, manual focus, 3 real shots into a scratch folder): `app/build/Macro\ Sony\ Capture.app/Contents/MacOS/Viewfinder --autotest <folder>`.
 
 ## Linting
 

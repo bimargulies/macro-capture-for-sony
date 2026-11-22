@@ -282,7 +282,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct ViewfinderApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     var body: some Scene {
-        WindowGroup("Viewfinder") {
+        WindowGroup("Macro Sony Capture") {
             ContentView(model: delegate.model, settings: delegate.model.settings)
         }
         Settings {

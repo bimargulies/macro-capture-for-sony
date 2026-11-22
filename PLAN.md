@@ -125,7 +125,7 @@ Rotated the camera to portrait both ways while the probe saved 144 frames over 7
 
 ## Packaging results (2026-11-21)
 
-The real app now lives in `app/` (copied from the spike; the spike stays as a reference). `app/bundle.sh` builds `app/build/Capture Viewfinder.app`; `SIGN_ID="<identity>" ./bundle.sh` signs with a real identity (default is ad hoc). Launching it with `open` connects and shows live video at 30 fps.
+The real app now lives in `app/` (copied from the spike; the spike stays as a reference). `app/bundle.sh` builds `app/build/Macro Sony Capture.app`; `SIGN_ID="<identity>" ./bundle.sh` signs with a real identity (default is ad hoc). Launching it with `open` connects and shows live video at 30 fps.
 
 Answers to the open packaging questions:
 

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build Capture Viewfinder.app (release) into build/.
+# Build Macro Sony Capture.app (release) into build/.
 # Signing identity: SIGN_ID env var (default "-" = ad hoc). Hardened runtime is on.
 set -e
 cd "$(dirname "$0")"
@@ -9,7 +9,7 @@ if [ -z "${SIGN_ID:-}" ]; then
 fi
 swift build -c release
 BIN="$(swift build -c release --show-bin-path)/Viewfinder"
-APP="build/Capture Viewfinder.app"
+APP="build/Macro Sony Capture.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks/CrAdapter"
 cp "$BIN" "$APP/Contents/MacOS/Viewfinder"

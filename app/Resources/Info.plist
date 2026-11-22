@@ -2,8 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 	<key>CFBundleIdentifier</key><string>local.capture.viewfinder</string>
-	<key>CFBundleName</key><string>Capture Viewfinder</string>
-	<key>CFBundleDisplayName</key><string>Capture Viewfinder</string>
+	<key>CFBundleName</key><string>Macro Sony Capture</string>
+	<key>CFBundleDisplayName</key><string>Macro Sony Capture</string>
 	<key>CFBundleExecutable</key><string>Viewfinder</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
 	<key>CFBundleShortVersionString</key><string>0.1</string>
