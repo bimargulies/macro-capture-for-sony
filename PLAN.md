@@ -456,3 +456,13 @@ The "MM -0.7" meter value the camera shows is not available: the SDK's `MeteredM
 ## SDK updates
 
 Sony publishes a dated "Notifications" list on https://support.d-imaging.sony.co.jp/app/sdk/en/index.html (no mailing list or feed that we found; check it by hand). As of 2026-11-21 the newest release is v2.02.00 (2026-06-10), the one we use; its only change is ILCE-7RM6 support. The last release with an A7R V item was v1.13.00 (2024-10-16). The page says the camera needs the latest system software.
+
+## White balance (SDK, from the headers; not yet probed on the A7R V)
+
+The SDK mirrors the camera: a mode plus a separate temperature.
+- `CrDeviceProperty_WhiteBalance`: enum `CrWhiteBalanceSetting`: AWB, Underwater Auto; presets Daylight, Shadow, Cloudy, Tungsten, Flash; Fluorescent (plain, warm white, cool white, day white, daylight); `ColorTemp`; Custom 1-3 and Custom.
+- `CrDeviceProperty_Colortemp`: kelvin, step 100 (step from `ColortempStep`); only meaningful when the mode is `ColorTemp`.
+- `CrDeviceProperty_WhiteBalanceTint` (+ `WhiteBalanceTintStep`): green-magenta shift.
+- Video-oriented extras, probably not reported on the A7R V: `WhiteBalanceModeSetting` (automatic/manual), `WhiteBalanceSwitch` (preset/memory A/memory B), R/B gain, offsets.
+- The camera reports which modes and what temperature range it allows, so probe the A7R V before building a control.
+- Possible UI: a mode picker, plus a temperature field shown only for `ColorTemp`, plus tint.
