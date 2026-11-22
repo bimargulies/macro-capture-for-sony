@@ -125,7 +125,9 @@ Rotated the camera to portrait both ways while the probe saved 144 frames over 7
 
 ## Packaging results (2026-11-21)
 
-The real app now lives in `app/` (copied from the spike; the spike stays as a reference). `app/bundle.sh` builds `app/build/Macro Sony Capture.app`; `SIGN_ID="<identity>" ./bundle.sh` signs with a real identity (default is ad hoc). Launching it with `open` connects and shows live video at 30 fps.
+> **Spike code removed:** `spike/app/`, `spike/cli/probe.cpp` and `spike/cli/shoot.cpp` no longer exist, though this file still mentions them as history. Commit `c9c30f2` is the last one containing them (for example, `git show c9c30f2:spike/cli/probe.cpp`). Only the focus-peaking experiments remain in `spike/`.
+
+The real app now lives in `app/` (copied from the spike). `app/bundle.sh` builds `app/build/Macro Sony Capture.app`; `SIGN_ID="<identity>" ./bundle.sh` signs with a real identity (default is ad hoc). Launching it with `open` connects and shows live video at 30 fps.
 
 Answers to the open packaging questions:
 

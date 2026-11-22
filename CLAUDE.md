@@ -6,7 +6,7 @@ A macOS replacement for Sony's Imaging Edge, controlling the user's Sony A7R V (
 
 - GUI in Swift (SwiftUI/AppKit, Metal later if needed). SDK wrapped by an Objective-C++ shim.
 - Still images only; live view is a JPEG poll loop.
-- Phase 1 spike is done (see PLAN.md): live view 30 fps, auto-reconnect, manual rotate needed. Reference code is in `spike/`.
+- Phase 1 spike is done (see PLAN.md): live view 30 fps, auto-reconnect, manual rotate needed. `spike/` now holds only the focus-peaking experiments (`cli/focusprobe.cpp`, `peaking/peaksim.swift`); the rest of the spike code is in git history at `c9c30f2`.
 - The real app is in `app/` (SwiftPM, Swift + Objective-C++ shim). Build the bundle with `app/bundle.sh`; run `open "app/build/Macro Sony Capture.app"`.
 - Gotchas: never call the SDK's `Init()` twice in one process (crashes); always disconnect before exit; quit Adobe Bridge before running.
 - Sony SDK lives in `third_party/` (gitignored, license-restricted); never commit it.
@@ -24,7 +24,7 @@ See [PLAN.md](PLAN.md) for the plan, open items, and the full background and rat
 
 - Swift: `cd app && swiftlint lint` (config in `app/.swiftlint.yml`).
 - C++/Objective-C++ shim: `cd app && /opt/homebrew/opt/llvm/bin/clang-tidy Sources/CCameraShim/CameraBridge.mm -- -x objective-c++ -std=c++17 -fobjc-arc -isysroot "$(xcrun --show-sdk-path)" -ISources/CCameraShim/include -Isdk/app/CRSDK` (config in `app/.clang-tidy`). cppcheck does not understand Objective-C++.
-- C++/Objective-C++ format: `cd app && /opt/homebrew/opt/llvm/bin/clang-format --dry-run --Werror Sources/CCameraShim/CameraBridge.mm Sources/CCameraShim/include/CameraBridge.h` (config in `app/.clang-format`; replace `--dry-run --Werror` with `-i` to fix). Every `if`, `else` and loop body uses `{}`, with opening braces on the same line. `spike/` is reference code and is exempt.
+- C++/Objective-C++ format: `cd app && /opt/homebrew/opt/llvm/bin/clang-format --dry-run --Werror Sources/CCameraShim/CameraBridge.mm Sources/CCameraShim/include/CameraBridge.h` (config in `app/.clang-format`; replace `--dry-run --Werror` with `-i` to fix). Every `if`, `else` and loop body uses `{}`, with opening braces on the same line. `spike/` is experimental code and is exempt.
 - Races: `cd app && swift test --sanitize=thread` (covers CaptureCore only; the camera code needs a hardware run).
 - Shim rules: no owning raw pointers (use `unique_ptr`/`shared_ptr` with the SDK's `Release()` as deleter); every SDK call holds `_devLock` shared, and Connect/Disconnect/ReleaseDevice hold it exclusive.
 
