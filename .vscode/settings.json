@@ -1,0 +1,8 @@
+{
+  "C_Cpp.intelliSenseEngine": "disabled",
+  "clangd.path": "/usr/bin/clangd",
+  "files.associations": {
+    "**/CCameraShim/**/*.h": "objective-cpp"
+  },
+  "cmake.ignoreCMakeListsMissing": true
+}

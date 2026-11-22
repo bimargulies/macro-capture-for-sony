@@ -1,0 +1,5 @@
+-xobjective-c++
+-std=c++17
+-fobjc-arc
+-Iinclude
+-I../../sdk/app/CRSDK
