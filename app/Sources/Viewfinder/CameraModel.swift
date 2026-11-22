@@ -441,13 +441,16 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
     private func handleDownload(_ staged: URL) {
         // Photos arrive in the order they were shot; use what was decided at the shutter press.
         let ctx: ShotContext
-        if !pending.isEmpty { ctx = pending.removeFirst().context }
+        let firedFromApp = !pending.isEmpty
+        if firedFromApp { ctx = pending.removeFirst().context }
         else { ctx = ShotContext(mode: settings.mode, destination: settings.destinationURL, description: settings.photoDescription) }
         updatePendingState()
-        deliver(staged, ctx)
+        deliver(staged, ctx, showInViewer: firedFromApp && ctx.mode == .exploring)
     }
 
-    private func deliver(_ staged: URL, _ ctx: ShotContext) {
+    /// `showInViewer` flips to the viewer tab when the photo lands. Not while the half-press is held:
+    /// removing the capture tab would lose the button's mouse-up and leave the camera half-pressed.
+    private func deliver(_ staged: URL, _ ctx: ShotContext, showInViewer: Bool = false) {
         Task {
             do {
                 let result = try await self.pipeline.deliver(staged: staged, context: ctx)
@@ -458,7 +461,8 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
                     }
                     if let warning = result.warning { self.errorMessage = warning }
                     self.lastDelivered = result.url
-                    if result.mode == .exploring { self.viewer.reload(selectNewest: true) }
+                    if result.mode == .exploring { self.viewer.reload(selecting: result.url.lastPathComponent) }
+                    if showInViewer && !self.halfPressed { self.showViewer = true }
                     self.lastMessage = (result.mode == .capture ? "Saved " : "Explored ") + result.url.lastPathComponent
                     self.drainMarkers()
                     self.retryFailed()

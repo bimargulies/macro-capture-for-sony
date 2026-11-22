@@ -43,8 +43,9 @@ final class ViewerModel: ObservableObject {
         set { defaults.set(Array(newValue.suffix(500)), forKey: "capturedExplores") }
     }
 
-    /// Re-reads the folder. `selectNewest` is used when a new photo has just arrived.
-    func reload(selectNewest: Bool = false) {
+    /// Re-reads the folder. `id` names a photo that has just arrived, to select it. It is passed by name
+    /// because the list is in camera-clock order, so after a clock change the last item may not be the newest.
+    func reload(selecting id: String? = nil) {
         library.prune(keep: Self.keep)
         let captured = Set(capturedNames)
         let old = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
@@ -53,7 +54,8 @@ final class ViewerModel: ObservableObject {
             item.captured = captured.contains(url.lastPathComponent)
             return item
         }
-        if selectNewest || selected == nil { select(items.last?.id) }
+        if let id, items.contains(where: { $0.id == id }) { select(id) }
+        else if selected == nil { select(items.last?.id) }
         loadThumbnails()
     }
 
@@ -61,9 +63,10 @@ final class ViewerModel: ObservableObject {
         guard id != selectedID || large == nil else { return }
         selectedID = id
         large = nil
-        guard let item = selected, let previews else { return }
         let token = UUID()
-        loadToken = token
+        loadToken = token   // abandons any load still running for the previous selection
+        loading = false
+        guard let item = selected, let previews else { return }
         loading = true
         Task {
             do {
@@ -92,6 +95,25 @@ final class ViewerModel: ObservableObject {
         guard let i = items.firstIndex(where: { $0.id == selectedID }) else { select(items.last?.id); return }
         let j = min(max(i + delta, 0), items.count - 1)
         select(items[j].id)
+    }
+
+    /// Moves a photo to the Trash and drops its caches. If it was showing, the next photo takes its place
+    /// (or the previous one, at the end of the list).
+    func delete(_ id: String) {
+        guard let i = items.firstIndex(where: { $0.id == id }) else { return }
+        let url = items[i].url
+        do {
+            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+        } catch {
+            problem = "Could not delete \(id): \(error.localizedDescription)"
+            return
+        }
+        library.removeCaches(for: url)
+        var next: String?
+        if id == selectedID {
+            next = i + 1 < items.count ? items[i + 1].id : (i > 0 ? items[i - 1].id : nil)
+        }
+        reload(selecting: next)
     }
 
     func markCaptured(_ id: String) {

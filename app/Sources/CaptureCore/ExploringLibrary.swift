@@ -21,6 +21,13 @@ public struct ExploringLibrary: Sendable {
     public func fullURL(for arw: URL) -> URL { cacheDirectory.appendingPathComponent(arw.deletingPathExtension().lastPathComponent + ".full.jpg") }
     public func infoURL(for arw: URL) -> URL { cacheDirectory.appendingPathComponent(arw.deletingPathExtension().lastPathComponent + ".orientation") }
 
+    /// Removes the thumbnail, preview and orientation files derived from a photo.
+    public func removeCaches(for arw: URL) {
+        for url in [thumbnailURL(for: arw), fullURL(for: arw), infoURL(for: arw)] {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
     /// Deletes all but the newest `keep` photos, with their caches, and any cache files left without a photo.
     public func prune(keep: Int) {
         let fm = FileManager.default

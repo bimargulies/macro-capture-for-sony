@@ -34,6 +34,23 @@ final class ExploringLibraryTests: XCTestCase {
         XCTAssertEqual(cache.count, 4)  // thumb + full for each of the two survivors
     }
 
+    func testRemoveCachesLeavesOtherPhotosCachesAndTheARW() throws {
+        let d = try makeDir()
+        let lib = ExploringLibrary(directory: d)
+        try FileManager.default.createDirectory(at: lib.cacheDirectory, withIntermediateDirectories: true)
+        let gone = d.appendingPathComponent("explore-20261121-120001-000.ARW")
+        let kept = d.appendingPathComponent("explore-20261121-120002-000.ARW")
+        for u in [gone, kept] {
+            try Data([1]).write(to: u)
+            for c in [lib.thumbnailURL(for: u), lib.fullURL(for: u), lib.infoURL(for: u)] { try Data([1]).write(to: c) }
+        }
+        lib.removeCaches(for: gone)
+        let cache = try FileManager.default.contentsOfDirectory(atPath: lib.cacheDirectory.path)
+        XCTAssertEqual(cache.count, 3)
+        XCTAssertTrue(cache.allSatisfy { $0.hasPrefix("explore-20261121-120002-000") })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: gone.path))
+    }
+
     func testPromoteCopiesWithSidecarAndKeepsTheOriginal() async throws {
         let d = try makeDir(), dest = try makeDir()
         let src = d.appendingPathComponent("explore-20261121-120000-000.ARW")

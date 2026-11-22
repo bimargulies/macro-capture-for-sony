@@ -377,6 +377,9 @@ struct Carousel: View {
                         .border(item.id == viewer.selectedID ? Color.orange : Color.clear, width: 3)
                         .id(item.id)
                         .onTapGesture { viewer.select(item.id) }
+                        .contextMenu {
+                            Button("Delete", role: .destructive) { viewer.delete(item.id) }
+                        }
                     }
                 }
                 .padding(6)
