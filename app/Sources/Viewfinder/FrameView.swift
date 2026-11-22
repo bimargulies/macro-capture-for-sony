@@ -37,6 +37,11 @@ final class FrameView: NSView {
     var onClick: ((CGPoint) -> Void)?
     /// Double-click at a point of the full picture, in the same coordinates. Follows the `onClick` of each click.
     var onDoubleClick: ((CGPoint) -> Void)?
+    /// Single click while magnified. Called only once it is clear no second click is coming.
+    var onMagnifiedClick: (() -> Void)?
+    /// Double-click while magnified.
+    var onMagnifiedDoubleClick: (() -> Void)?
+    private var pendingMagnifiedClick: DispatchWorkItem?
     private var imageSize = CGSize(width: 4, height: 3)
 
     /// The spot chosen by a click (gray corners). Kept until the next click.
@@ -47,7 +52,13 @@ final class FrameView: NSView {
     private let boxFraction: CGFloat = 1 / 9.4
 
     /// While magnified the picture already shows the chosen area, so the corner marks are hidden.
-    var magnified = false { didSet { needsLayout = true; window?.invalidateCursorRects(for: self) } }
+    var magnified = false {
+        didSet {
+            if !magnified { pendingMagnifiedClick?.cancel(); pendingMagnifiedClick = nil }
+            needsLayout = true
+            window?.invalidateCursorRects(for: self)
+        }
+    }
 
     private let hoverLayer = CAShapeLayer()
     private let placedLayer = CAShapeLayer()
@@ -147,13 +158,33 @@ final class FrameView: NSView {
     override func mouseExited(with event: NSEvent) { hover = nil; updateMarkers() }
 
     override func mouseDown(with event: NSEvent) {
-        guard !magnified else { return }
+        guard !magnified else { handleMagnifiedClick(event); return }
         let p = convert(event.locationInWindow, from: nil)
         let f = imagePoint(p)
         placed = f
         updateMarkers()
         onClick?(f)
         if event.clickCount == 2 { onDoubleClick?(f) }
+    }
+
+    /// Later clicks of a run are ignored, so the third click of a quick triple does not act on the new state.
+    private func handleMagnifiedClick(_ event: NSEvent) {
+        pendingMagnifiedClick?.cancel()
+        pendingMagnifiedClick = nil
+        switch event.clickCount {
+        case 1:
+            let item = DispatchWorkItem { [weak self] in
+                guard let self, self.magnified else { return }
+                self.pendingMagnifiedClick = nil
+                self.onMagnifiedClick?()
+            }
+            pendingMagnifiedClick = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval, execute: item)
+        case 2:
+            onMagnifiedDoubleClick?()
+        default:
+            break
+        }
     }
 
     override func layout() {

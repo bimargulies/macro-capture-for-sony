@@ -99,7 +99,8 @@ struct ControlsView: View {
                 .pickerStyle(.segmented).frame(width: 190).labelsHidden()
                 .disabled(!connected || model.magnifierRatios.isEmpty)
                 .help("Focus magnifier. Click the picture to mark a spot (orange corners follow the mouse, gray corners stay), then choose a power to magnify there. "
-                    + "Double-click the picture to mark a spot and magnify it at ×4.7. Off or Esc to return.")
+                    + "Double-click the picture to mark a spot and magnify it at ×4.7. "
+                    + "While magnified, click to switch between ×4.7 and ×9.3, and double-click (or Off, or Esc) to return.")
                 Button("") { model.setMagnifier(ratio: 0) }
                     .keyboardShortcut(.escape, modifiers: [])
                     .frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
@@ -302,8 +303,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    /// Lets photos finish copying before quitting. After the time limit it quits anyway: anything
+    /// unfinished stays in staging and is delivered at the next launch.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard model.hasUnfinishedDeliveries else { return .terminateNow }
+        model.lastMessage = "Finishing photo transfers before quitting…"
+        let deadline = Date().addingTimeInterval(300)
+        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] timer in
+            guard self?.model.hasUnfinishedDeliveries != true || Date() > deadline else { return }
+            timer.invalidate()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        RunLoop.main.add(timer, forMode: .common)  // AppKit waits in a modal run loop mode after .terminateLater
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) { model.shutdown() }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+}
+
+/// Stack menu. Disabled while the app has a stack open, because End stack is the right command then.
+struct StackCommands: Commands {
+    @ObservedObject var model: CameraModel
+    var body: some Commands {
+        CommandMenu("Stack") {
+            Button("Force Stack Marker") { model.writeForcedMarker() }
+                .disabled(model.stackOpen)
+        }
+    }
 }
 
 @main
@@ -314,6 +341,7 @@ struct ViewfinderApp: App {
         WindowGroup(Self.windowTitle) {
             ContentView(model: delegate.model, settings: delegate.model.settings)
         }
+        .commands { StackCommands(model: delegate.model) }
         Settings {
             SettingsView(model: delegate.model, settings: delegate.model.settings)
         }

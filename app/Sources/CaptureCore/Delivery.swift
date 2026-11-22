@@ -65,6 +65,11 @@ public actor DeliveryPipeline {
         self.exploringDirectory = exploringDirectory
     }
 
+    /// The camera's timestamp for a photo, if it can be read.
+    func captureTime(of file: URL) async -> NaiveTime? {
+        try? await exiftool?.captureTime(of: file)
+    }
+
     /// Delivers one downloaded photo according to the context captured at the shutter press.
     public func deliver(staged: URL, context: ShotContext) async throws -> DeliveryResult {
         let cameraTime = try? await exiftool?.captureTime(of: staged)

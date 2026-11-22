@@ -65,7 +65,20 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
     private var pending: [PendingShot] = []
     private var failed: [(url: URL, context: ShotContext)] = []
     private var lastCameraTime: NaiveTime?
-    private var markerQueue: [Bool] = []   // true = opening marker, false = closing marker
+    /// `forced` comes from the Stack menu: it repairs a stack the app no longer knows about, so it leaves `stackOpen` alone.
+    private enum MarkerRequest: String { case opening, closing, forced }
+    private var markerQueue: [MarkerRequest] = []
+    /// Photos on this Mac still being copied to their destination.
+    private var deliveriesInFlight = 0
+    /// True until the photos left in staging by a previous run have been delivered.
+    private var recoveringStaged = false
+    private let stagedStore = StagedRecovery(staging: AppFolders.staging)
+    private let usesIsolatedDefaults: Bool
+
+    /// Work that quitting would interrupt.
+    var hasUnfinishedDeliveries: Bool {
+        !pending.isEmpty || deliveriesInFlight > 0 || recoveringStaged || (!markerQueue.isEmpty && failed.isEmpty)
+    }
 
     /// A press with no capture signal after this long did not fire (the camera may have been busy).
     var captureTimeoutSeconds = 8.0
@@ -97,6 +110,7 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
 
     /// `isolatedDefaults`: use a throwaway preferences suite (for `--autotest`).
     init(isolatedDefaults: Bool = false) {
+        usesIsolatedDefaults = isolatedDefaults
         if isolatedDefaults {
             let suite = "capture-viewfinder-autotest"
             UserDefaults().removePersistentDomain(forName: suite)
@@ -113,6 +127,8 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
         // A click only marks the spot; choosing a magnification then centres on it.
         frameView.onClick = { [weak self] p in self?.magnifierCenter = p }
         frameView.onDoubleClick = { [weak self] p in self?.magnifyForDoubleClick(at: p) }
+        frameView.onMagnifiedClick = { [weak self] in self?.toggleMagnifierPower() }
+        frameView.onMagnifiedDoubleClick = { [weak self] in self?.setMagnifier(ratio: 0) }
         frameView.onDisplayed = { [weak self] latency, decode, size in self?.record(latency, decode, size) }
         try? FileManager.default.createDirectory(at: AppFolders.staging, withIntermediateDirectories: true)
         viewer.reload()
@@ -123,7 +139,42 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
 
     // MARK: Connection
 
-    func start() { ctl.async { self.connectLoop() }; startMagnifierWatch(); startExposureWatch() }
+    func start() {
+        recoverStagedPhotos()  // lists the folder first, so a new download cannot be mistaken for a leftover
+        ctl.async { self.connectLoop() }
+        startMagnifierWatch()
+        startExposureWatch()
+    }
+
+    /// Delivers photos a previous run left in staging, oldest first. Markers wait until this is done.
+    /// A photo with no saved context predates the context files and is treated as a capture.
+    private func recoverStagedPhotos() {
+        guard !usesIsolatedDefaults else { return }  // an autotest must not send real leftovers to its scratch folder
+        let store = stagedStore
+        let files = store.stagedPhotos()
+        let destination = settings.destinationURL
+        let description = settings.photoDescription
+        recoveringStaged = true
+        Task {
+            store.removeOrphanContexts()
+            let contexts = Dictionary(uniqueKeysWithValues: files.map { file in
+                (file, store.context(for: file) ?? ShotContext(mode: .capture, destination: destination, description: description))
+            })
+            for dir in Set(contexts.values.compactMap(\.destination) + [destination].compactMap { $0 }) {
+                StagedRecovery.removeAbandonedPartials(in: dir)
+            }
+            for file in await self.pipeline.inCaptureOrder(files) {
+                guard let context = contexts[file] else { continue }
+                await MainActor.run { self.deliveriesInFlight += 1 }
+                await self.performDelivery(file, context, showInViewer: false)
+            }
+            await MainActor.run {
+                self.recoveringStaged = false
+                if !files.isEmpty { self.lastMessage = "Recovered \(files.count) photo(s) left from the previous run." }
+                self.drainMarkers()
+            }
+        }
+    }
 
     /// Keeps trying until connected (or shutdown). Runs on `ctl`.
     private func connectLoop() {
@@ -181,15 +232,30 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
         if idle { magQueue.async { self.drainMagnifier() } }
     }
 
-    /// Double-click on the viewfinder: magnify there at ×4.7, or the closest power the camera lists
-    /// (the list can differ from one lens or setting to another).
+    // Viewfinder click powers, in tenths as the camera reports them.
+    private static let lowMagnifierPower = 47
+    private static let highMagnifierPower = 93
+
+    /// The power the camera lists closest to `wanted` (the list can differ from one lens or setting to another).
+    private func closestMagnifierRatio(to wanted: Int) -> UInt32? {
+        magnifierRatios.min { abs(Int($0) - wanted) < abs(Int($1) - wanted) }
+    }
+
+    /// Double-click on the viewfinder: magnify there at ×4.7.
     private func magnifyForDoubleClick(at point: CGPoint) {
-        let wanted = 47  // tenths, as the camera reports them
-        guard let ratio = magnifierRatios.min(by: { abs(Int($0) - wanted) < abs(Int($1) - wanted) }) else {
+        guard let ratio = closestMagnifierRatio(to: Self.lowMagnifierPower) else {
             lastMessage = "The magnifier is not available yet."
             return
         }
         setMagnifier(ratio: ratio, center: point)
+    }
+
+    /// Single click while magnified: ×9.3, or back to ×4.7 if already there. Stays on the same spot.
+    private func toggleMagnifierPower() {
+        guard magnifierRatio != 0,
+              let low = closestMagnifierRatio(to: Self.lowMagnifierPower),
+              let high = closestMagnifierRatio(to: Self.highMagnifierPower) else { return }
+        setMagnifier(ratio: magnifierRatio == high ? low : high)
     }
 
     private func drainMagnifier() {
@@ -370,16 +436,36 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
             errorMessage = "Take one photo first: a marker is stamped just after the previous photo's own time, so it sorts correctly whatever the camera's clock says."
             return
         }
-        markerQueue.append(!stackOpen)
+        markerQueue.append(stackOpen ? .closing : .opening)
         stackOpen.toggle()
+        retryFailed()
+        drainMarkers()
+    }
+
+    /// Writes one marker without changing the app's stack state, e.g. to close a stack left open across a restart.
+    /// The importer pairs markers, so this flips whatever state it is in.
+    func writeForcedMarker() {
+        guard settings.destinationURL != nil else {
+            errorMessage = "A marker needs a destination folder. Choose one in Settings (⌘,)."
+            return
+        }
+        guard lastCameraTime != nil else {
+            errorMessage = "Take one photo first: a marker is stamped just after the previous photo's own time."
+            return
+        }
+        markerQueue.append(.forced)
+        retryFailed()
         drainMarkers()
     }
 
     /// Markers wait until every photo still in flight has been delivered: the importer closes a
     /// stack at the closing marker, so a photo arriving after it would end up outside the stack.
+    /// That includes photos still copying to the destination and captures whose delivery failed.
     private func drainMarkers() {
-        guard pending.isEmpty, !markerQueue.isEmpty, let dir = settings.destinationURL, let last = lastCameraTime else { return }
-        let opening = markerQueue.removeFirst()
+        guard pending.isEmpty, deliveriesInFlight == 0, !recoveringStaged,
+              !failed.contains(where: { $0.context.mode == .capture }),
+              !markerQueue.isEmpty, let dir = settings.destinationURL, let last = lastCameraTime else { return }
+        let request = markerQueue.removeFirst()
         // 1 ms after the previous photo or marker: sorts right after it, before whatever comes next.
         let t = last.advanced(by: 0.001)
         lastCameraTime = t
@@ -388,12 +474,12 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
             do {
                 let url = try await self.pipeline.deliverMarker(at: t, into: dir)
                 await MainActor.run {
-                    self.lastMessage = "Wrote \(opening ? "opening" : "closing") marker \(url.lastPathComponent)"
+                    self.lastMessage = "Wrote \(request.rawValue) marker \(url.lastPathComponent)"
                     self.drainMarkers()
                 }
             } catch {
                 await MainActor.run {
-                    self.stackOpen = !opening   // it did not happen
+                    if request != .forced { self.stackOpen = request == .closing }  // it did not happen
                     self.lastCameraTime = self.settings.lastCameraTime  // the time slot was not used
                     self.errorMessage = "\(error)"
                     self.drainMarkers()
@@ -457,16 +543,24 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
         if firedFromApp { ctx = pending.removeFirst().context }
         else { ctx = ShotContext(mode: settings.mode, destination: settings.destinationURL, description: settings.photoDescription) }
         updatePendingState()
+        stagedStore.remember(ctx, for: staged)
         deliver(staged, ctx, showInViewer: firedFromApp && ctx.mode == .exploring)
     }
 
     /// `showInViewer` flips to the viewer tab when the photo lands. Not while the half-press is held:
     /// removing the capture tab would lose the button's mouse-up and leave the camera half-pressed.
     private func deliver(_ staged: URL, _ ctx: ShotContext, showInViewer: Bool = false) {
-        Task {
+        deliveriesInFlight += 1
+        Task { await self.performDelivery(staged, ctx, showInViewer: showInViewer) }
+    }
+
+    /// The caller has already counted this delivery in `deliveriesInFlight`.
+    private func performDelivery(_ staged: URL, _ ctx: ShotContext, showInViewer: Bool) async {
             do {
                 let result = try await self.pipeline.deliver(staged: staged, context: ctx)
                 await MainActor.run {
+                    self.deliveriesInFlight -= 1
+                    self.stagedStore.forget(staged)
                     if let cam = result.cameraTime, self.lastCameraTime == nil || cam > self.lastCameraTime! {
                         self.lastCameraTime = cam
                         self.settings.lastCameraTime = cam
@@ -481,19 +575,24 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
                 }
             } catch {
                 await MainActor.run {
+                    self.deliveriesInFlight -= 1
                     self.failed.append((staged, ctx))
                     self.errorMessage = "\(error) The photo is kept in \(AppFolders.staging.path) and will be retried."
                     self.drainMarkers()
                 }
             }
-        }
     }
 
     /// Retry photos whose delivery failed (e.g. the destination drive was not mounted).
     func retryFailed() {
         let items = failed
         failed.removeAll()
-        for item in items { deliver(item.url, item.context) }
+        for item in items {
+            var context = item.context
+            // A recovered photo may have had no destination yet; use the one chosen since.
+            if context.mode == .capture && context.destination == nil { context.destination = settings.destinationURL }
+            deliver(item.url, context)
+        }
     }
 
     /// Copies the photo selected in the viewer to the destination folder, as a capture (with the description).
