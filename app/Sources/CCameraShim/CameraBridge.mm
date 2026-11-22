@@ -393,7 +393,6 @@ const unsigned CameraBridgePropFNumber = SCRSDK::CrDeviceProperty_FNumber;
 const unsigned CameraBridgePropShutterSpeed = SCRSDK::CrDeviceProperty_ShutterSpeed;
 const unsigned CameraBridgePropISO = SCRSDK::CrDeviceProperty_IsoSensitivity;
 const unsigned CameraBridgePropExposureBias = SCRSDK::CrDeviceProperty_ExposureBiasCompensation;
-const unsigned CameraBridgePropMeteredManual = SCRSDK::CrDeviceProperty_MeteredManualLevel;
 const unsigned CameraBridgePropExposureProgram = SCRSDK::CrDeviceProperty_ExposureProgramMode;
 
 - (NSDictionary<NSNumber *, NSNumber *> *)readExposure {
@@ -401,7 +400,7 @@ const unsigned CameraBridgePropExposureProgram = SCRSDK::CrDeviceProperty_Exposu
     std::shared_lock<std::shared_mutex> lock(_devLock);
     if (!_dev || !_connected) return out;
     CrInt32u codes[] = { CameraBridgePropFNumber, CameraBridgePropShutterSpeed, CameraBridgePropISO,
-                         CameraBridgePropExposureBias, CameraBridgePropMeteredManual, CameraBridgePropExposureProgram };
+                         CameraBridgePropExposureBias, CameraBridgePropExposureProgram };
     CrInt32 n = 0;
     SCRSDK::CrDeviceProperty *list = nullptr;
     SCRSDK::CrError err = SCRSDK::GetSelectDeviceProperties(_dev, static_cast<CrInt32>(std::size(codes)), codes, &list, &n);

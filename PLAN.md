@@ -448,3 +448,11 @@ Offline experiment on a real A7R V photo (the ARW's embedded 8448x6336 JPEG), si
 - "Capture this photo" (⌘K) copies the ARW to the destination as a normal `CAP-` capture, using the current description, sidecar last; the exploring copy stays and gets a green check.
 - Caveat: a promoted photo keeps its original camera time. If a stack is open when you capture an older exploring photo, the importer (which sorts by capture time) will not place it inside that stack.
 - `--viewer` launch argument opens on the Viewer tab (for screenshots).
+
+## Meter reading (decided 2026-11-21)
+
+The "MM -0.7" meter value the camera shows is not available: the SDK's `MeteredManualLevel` property is absent from the A7R V's 233 properties, and the Sony app never displays any meter info either. The app does not try to show it (code removed). Bottom line: shutter, aperture, ISO, compensation.
+
+## SDK updates
+
+Sony publishes a dated "Notifications" list on https://support.d-imaging.sony.co.jp/app/sdk/en/index.html (no mailing list or feed that we found; check it by hand). As of 2026-11-21 the newest release is v2.02.00 (2026-06-10), the one we use; its only change is ILCE-7RM6 support. The last release with an A7R V item was v1.13.00 (2024-10-16). The page says the camera needs the latest system software.

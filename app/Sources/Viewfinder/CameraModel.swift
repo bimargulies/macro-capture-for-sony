@@ -41,7 +41,7 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
     @Published var showViewer = CommandLine.arguments.contains("--viewer")
     let viewer: ViewerModel
 
-    /// Bottom-line exposure readout: shutter, aperture, ISO, meter, compensation.
+    /// Bottom-line exposure readout: shutter, aperture, ISO, compensation.
     @Published var exposureLine = ""
 
     // Focus magnifier. Ratio 0 = off, else tenths of a power (47 = x4.7).
@@ -265,7 +265,6 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
         if let v = val(CameraBridgePropShutterSpeed), let t = ExposureText.shutter(v) { parts.append(t) }
         if let v = val(CameraBridgePropFNumber), let t = ExposureText.aperture(v) { parts.append(t) }
         if let v = val(CameraBridgePropISO), let t = ExposureText.iso(v) { parts.append(t) }
-        if let v = val(CameraBridgePropMeteredManual) { parts.append("meter " + ExposureText.ev(v)) }
         if let v = val(CameraBridgePropExposureBias) { parts.append("comp " + ExposureText.ev(v)) }
         return parts.joined(separator: "   ")
     }

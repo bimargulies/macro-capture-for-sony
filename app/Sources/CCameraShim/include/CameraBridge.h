@@ -54,7 +54,7 @@ typedef NS_ENUM(NSInteger, CameraBridgeState) {
 - (NSArray<NSNumber *> *)magnifierRatios;
 
 /// Current exposure settings as raw SDK values, keyed by SDK property code (CrDeviceProperty_*): f-number,
-/// shutter speed, ISO, exposure compensation, metered-manual level, exposure program. Properties the camera
+/// shutter speed, ISO, exposure compensation, exposure program. Properties the camera
 /// does not report are absent. Empty if not connected.
 - (NSDictionary<NSNumber *, NSNumber *> *)readExposure;
 
@@ -80,7 +80,6 @@ extern const unsigned CameraBridgePropFNumber;
 extern const unsigned CameraBridgePropShutterSpeed;
 extern const unsigned CameraBridgePropISO;
 extern const unsigned CameraBridgePropExposureBias;
-extern const unsigned CameraBridgePropMeteredManual;
 extern const unsigned CameraBridgePropExposureProgram;
 
 NS_ASSUME_NONNULL_END
