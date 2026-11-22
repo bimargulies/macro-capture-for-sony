@@ -1,3 +1,7 @@
 # Run on the Objective-C++ shim only (see CLAUDE.md "Linting"). SDK headers are excluded.
-Checks: 'bugprone-*,cppcoreguidelines-owning-memory,cppcoreguidelines-no-malloc,modernize-use-nullptr,modernize-make-unique,modernize-make-shared,performance-*,clang-analyzer-*,-bugprone-easily-swappable-parameters,-bugprone-signed-bitwise,-bugprone-assignment-in-if-condition,-performance-enum-size'
+Checks: 'bugprone-*,cppcoreguidelines-owning-memory,cppcoreguidelines-no-malloc,modernize-use-nullptr,modernize-make-unique,modernize-make-shared,performance-*,clang-analyzer-*,-bugprone-easily-swappable-parameters,-bugprone-signed-bitwise,-bugprone-assignment-in-if-condition,-performance-enum-size,readability-braces-around-statements'
 HeaderFilterRegex: 'Sources/CCameraShim/.*'
+WarningsAsErrors: 'readability-braces-around-statements'
+CheckOptions:
+  - key: readability-braces-around-statements.ShortStatementLines
+    value: '0'

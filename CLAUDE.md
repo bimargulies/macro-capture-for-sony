@@ -24,6 +24,7 @@ See [PLAN.md](PLAN.md) for the plan, open items, and the full background and rat
 
 - Swift: `cd app && swiftlint lint` (config in `app/.swiftlint.yml`).
 - C++/Objective-C++ shim: `cd app && /opt/homebrew/opt/llvm/bin/clang-tidy Sources/CCameraShim/CameraBridge.mm -- -x objective-c++ -std=c++17 -fobjc-arc -isysroot "$(xcrun --show-sdk-path)" -ISources/CCameraShim/include -Isdk/app/CRSDK` (config in `app/.clang-tidy`). cppcheck does not understand Objective-C++.
+- C++/Objective-C++ format: `cd app && /opt/homebrew/opt/llvm/bin/clang-format --dry-run --Werror Sources/CCameraShim/CameraBridge.mm Sources/CCameraShim/include/CameraBridge.h` (config in `app/.clang-format`; replace `--dry-run --Werror` with `-i` to fix). Every `if`, `else` and loop body uses `{}`, with opening braces on the same line. `spike/` is reference code and is exempt.
 - Races: `cd app && swift test --sanitize=thread` (covers CaptureCore only; the camera code needs a hardware run).
 - Shim rules: no owning raw pointers (use `unique_ptr`/`shared_ptr` with the SDK's `Release()` as deleter); every SDK call holds `_devLock` shared, and Connect/Disconnect/ReleaseDevice hold it exclusive.
 

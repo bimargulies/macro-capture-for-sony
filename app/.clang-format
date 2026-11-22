@@ -1,0 +1,17 @@
+# Project style: opening braces stay on the same line, and control bodies always have braces.
+BasedOnStyle: LLVM
+BreakBeforeBraces: Attach
+InsertBraces: true
+IndentWidth: 4
+AccessModifierOffset: -4
+ColumnLimit: 0
+PointerAlignment: Right
+SortIncludes: false
+SpacesBeforeTrailingComments: 2
+SpaceBeforeCpp11BracedList: true
+AllowShortBlocksOnASingleLine: Never
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortLambdasOnASingleLine: All
+ObjCBlockIndentWidth: 4
