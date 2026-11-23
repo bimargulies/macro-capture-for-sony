@@ -83,7 +83,7 @@ struct ControlsView: View {
                 Button("Shutter") { model.shoot() }
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(!connected || model.awaitingCapture)
-                    .help("Full press (⌘↩). Presses half-way first if you are not already holding the half-press.")
+                    .help("Full press (Return or ⌘↩). Presses half-way first if you are not already holding the half-press.")
                 Button { settings.rotation = (settings.rotation + 3) % 4 } label: { Image(systemName: "rotate.left") }
                     .keyboardShortcut("[", modifiers: .command)
                     .help("Rotate the viewfinder image counter-clockwise (⌘[). Display only.")
@@ -196,7 +196,9 @@ struct ContentView: View {
                     Text(model.exposureLine).font(.system(.body, design: .monospaced)).padding(.leading, 12)
                 }
                 Spacer()
-                Text(model.statsLine).font(.system(.caption, design: .monospaced))
+                if settings.showLiveViewStats {
+                    Text(model.statsLine).font(.system(.caption, design: .monospaced))
+                }
             }
             .padding(8)
         }
@@ -227,9 +229,14 @@ struct SettingsView: View {
             Section("Tools") {
                 LabeledContent("ExifTool", value: model.exifToolAvailable ? "found" : "not found")
             }
+            Section("Diagnostics") {
+                Toggle("Show live view statistics", isOn: $settings.showLiveViewStats)
+                Text("Frame rate, latency, decode time and dropped frames, at the bottom right of the Capture tab.")
+                    .font(.caption).foregroundColor(.secondary)
+            }
         }
         .formStyle(.grouped)
-        .frame(width: 560, height: 360)
+        .frame(width: 560, height: 450)
     }
 
     private func choose() {
@@ -257,6 +264,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         model.start()
         installTabSwitch()
+        installShutterKey()
 
         // Always release the camera session, even on Ctrl-C / kill.
         for sig in [SIGINT, SIGTERM] {
@@ -286,6 +294,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, self.shouldSwitchTabs(on: event) else { return event }
             self.model.showViewer.toggle()
+            return nil
+        }
+    }
+
+    /// Return (or the keypad Enter) fires the shutter on the Capture tab. In the Description field it ends the
+    /// editing instead, so typing a description cannot take a photo; the next Return then fires.
+    private func installShutterKey() {
+        let returnKeyCodes: Set<UInt16> = [36, 76]
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, returnKeyCodes.contains(event.keyCode),
+                  event.modifierFlags.isDisjoint(with: [.shift, .control, .option, .command]),  // ⌘↩ is the button's own shortcut
+                  !self.model.showViewer,
+                  let window = event.window, window.title == ViewfinderApp.windowTitle, window.attachedSheet == nil
+            else { return event }
+            if let text = window.firstResponder as? NSTextView {
+                if text.hasMarkedText() { return event }  // an input method is confirming its text
+                window.makeFirstResponder(nil)
+                return nil
+            }
+            // A held key repeats; one press is one shot. A press while a shot is still waiting is ignored, like the button.
+            if !event.isARepeat, !self.model.awaitingCapture { self.model.shoot() }
             return nil
         }
     }

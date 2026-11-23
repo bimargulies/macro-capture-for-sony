@@ -15,6 +15,10 @@ final class AppSettings: ObservableObject {
     /// Display rotation of the viewfinder in clockwise quarter turns (0...3). Remembered.
     @Published var rotation: Int { didSet { defaults.set(rotation, forKey: "rotation") } }
 
+    /// Shows the live view's frame rate, latency, decode time and dropped frames at the bottom right. Off by default;
+    /// the numbers are always measured, so turning it on needs no restart.
+    @Published var showLiveViewStats: Bool { didSet { defaults.set(showLiveViewStats, forKey: "showLiveViewStats") } }
+
     /// `defaults` is replaced by a throwaway suite in `--autotest` runs so real preferences are untouched.
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -22,6 +26,7 @@ final class AppSettings: ObservableObject {
         destinationPath = defaults.string(forKey: "destinationPath") ?? ""
         photoDescription = defaults.string(forKey: "photoDescription") ?? ""
         rotation = ((defaults.integer(forKey: "rotation") % 4) + 4) % 4
+        showLiveViewStats = defaults.bool(forKey: "showLiveViewStats")
     }
 
     var destinationURL: URL? {

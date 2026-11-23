@@ -2,10 +2,13 @@ import Foundation
 
 /// Formats raw Sony SDK exposure values for display (encodings per the SDK's RemoteCli sample).
 public enum ExposureText {
-    /// F-number: value is 100 x f ("F5.6", "F8"). 0 or 0xFFFF = unknown.
+    /// F-number: value is 100 x f ("F5.6", "F8"). A lens that does not report its aperture sends one of the SDK's markers
+    /// just below 0x10000 (0xFFFD iris close, 0xFFFE unknown, 0xFFFF nothing to display, also seen as -1): "F: Not Avail".
+    /// 0 means no reading yet: nil, so the readout leaves the aperture out.
     public static func aperture(_ v: UInt64) -> String? {
         let f = UInt16(truncatingIfNeeded: v)
-        if f == 0 || f == 0xFFFF { return nil }
+        if f == 0 { return nil }
+        if f >= 0xFFF0 { return "F: Not Avail" }
         return f % 100 == 0 ? "F\(f / 100)" : String(format: "F%.1f", Double(f) / 100)
     }
 

@@ -5,7 +5,14 @@ final class ExposureTextTests: XCTestCase {
     func testAperture() {
         XCTAssertEqual(ExposureText.aperture(800), "F8")
         XCTAssertEqual(ExposureText.aperture(560), "F5.6")
+        XCTAssertEqual(ExposureText.aperture(6400), "F64")
         XCTAssertNil(ExposureText.aperture(0))
+    }
+    func testApertureNotReportedByTheLens() {
+        // The SDK's markers (iris close, unknown, nothing), the values that showed as "F655.3", and a sign-extended -1.
+        for v: UInt64 in [0xFFFD, 0xFFFE, 0xFFFF, 0xFFF9, UInt64.max] {
+            XCTAssertEqual(ExposureText.aperture(v), "F: Not Avail", "0x\(String(v, radix: 16))")
+        }
     }
     func testShutter() {
         XCTAssertEqual(ExposureText.shutter(0x00010FA0), "1/4000")
