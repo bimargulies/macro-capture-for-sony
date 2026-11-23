@@ -489,3 +489,11 @@ The SDK mirrors the camera: a mode plus a separate temperature.
 - Video-oriented extras, probably not reported on the A7R V: `WhiteBalanceModeSetting` (automatic/manual), `WhiteBalanceSwitch` (preset/memory A/memory B), R/B gain, offsets.
 - The camera reports which modes and what temperature range it allows, so probe the A7R V before building a control.
 - Possible UI: a mode picker, plus a temperature field shown only for `ColorTemp`, plus tint.
+
+# Prompt for Claude Code on the Mac with the camera
+
+Run `git pull --ff-only origin main` on that Mac first, then paste this into Claude Code:
+
+```text
+Follow the section "In progress: verify the app rename on the Mac with the camera" in PLAN.md. The camera is connected to this Mac. Stop and ask me before the GitHub repo rename. When the verification is done, also delete this prompt section from the end of PLAN.md.
+```
