@@ -43,15 +43,17 @@ final class AppSettings: ObservableObject {
 
 /// Folders the app owns.
 enum AppFolders {
+    private static let name = "Macro Capture for Sony"
+
     private static func support(_ sub: String) -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("Capture Viewfinder").appendingPathComponent(sub)
+        return base.appendingPathComponent(name).appendingPathComponent(sub)
     }
     /// Where the SDK writes photos before we route them. Never the final destination.
     static var staging: URL { support("staging") }
     /// Exploring-mode photos: local, and kept for a few days.
     static var exploring: URL {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Capture Viewfinder").appendingPathComponent("exploring")
+            .appendingPathComponent(name).appendingPathComponent("exploring")
     }
 }
