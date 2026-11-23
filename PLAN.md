@@ -168,17 +168,6 @@ Exit criteria: smooth live view in a Swift window at acceptable latency, and a g
 - Overlay data from the SDK (focus frames, faces) and how it is drawn.
 - Reconnect and hot-unplug handling; threading model for SDK callbacks.
 
-## In progress: verify the app rename on the Mac with the camera
-
-The app was renamed and passes unit tests, but has not been launched or tested on the camera. Delete this section when done. On the Mac connected to the camera:
-
-1. Quit Adobe Bridge and any running copy of the app, then `git pull --ff-only origin main`.
-2. Copy this Mac's saved settings to the new bundle ID, only if it has none yet: `defaults read local.macro-capture-for-sony >/dev/null 2>&1 || defaults export local.capture.viewfinder - | defaults import local.macro-capture-for-sony -`. Skip this if `local.capture.viewfinder` does not exist. Keep the old domain.
-3. `cd app && swift test && ./bundle.sh`. The Sony SDK in `third_party/` is not in git, so it must already be on this Mac. Check that the build reports the "Capture Dev" identity.
-4. With the camera on and in manual focus, run the hardware test into a new, empty scratch folder: `app/build/Macro\ Capture\ for\ Sony.app/Contents/MacOS/Viewfinder --autotest <folder>`. It takes 3 real shots.
-5. Ask the user to `open "app/build/Macro Capture for Sony.app"`, approve any macOS or Little Snitch prompts, and confirm the window title, live view, and restored rotation, description, and window position.
-6. If all of that passes, delete the old `app/build/Macro Sony Capture.app` on this Mac, then ask the user before doing the repo rename below. Every clone needs its own `origin` update and folder move.
-
 ## Planned: rename the GitHub repo and local folder
 
 The product is now "Macro Capture for Sony". The repo is still `capture-for-fun-and-profit`; the new name is `macro-capture-for-sony` (not taken as of 2026-11-23). Do these after the rename commit is pushed:
@@ -489,11 +478,3 @@ The SDK mirrors the camera: a mode plus a separate temperature.
 - Video-oriented extras, probably not reported on the A7R V: `WhiteBalanceModeSetting` (automatic/manual), `WhiteBalanceSwitch` (preset/memory A/memory B), R/B gain, offsets.
 - The camera reports which modes and what temperature range it allows, so probe the A7R V before building a control.
 - Possible UI: a mode picker, plus a temperature field shown only for `ColorTemp`, plus tint.
-
-# Prompt for Claude Code on the Mac with the camera
-
-Run `git pull --ff-only origin main` on that Mac first, then paste this into Claude Code:
-
-```text
-Follow the section "In progress: verify the app rename on the Mac with the camera" in PLAN.md. The camera is connected to this Mac. Stop and ask me before the GitHub repo rename. When the verification is done, also delete this prompt section from the end of PLAN.md.
-```
