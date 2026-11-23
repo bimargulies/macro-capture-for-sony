@@ -15,7 +15,7 @@ public enum XMPSidecar {
 
     /// The keyword in a marker's sidecar that tells the importer "this is a stack boundary", so it does
     /// not have to guess from the picture.
-    public static let markerKeyword = "capture-viewfinder:stack-marker"
+    public static let markerKeyword = "macro-capture-for-sony:stack-marker"
 
     /// An XMP packet for a photo. The description is Dublin Core `dc:description` (language "x-default");
     /// it is left out when empty. Every delivered photo gets a sidecar even without a description: its
@@ -43,9 +43,9 @@ public enum XMPSidecar {
         }
         let xml = """
         <?xpacket begin="\u{FEFF}" id="W5M0MpCehiHzreSzNTczkc9d"?>
-        <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Capture Viewfinder">
+        <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Macro Capture for Sony">
          <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
-          <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmp:CreatorTool="Capture Viewfinder">\(body)
+          <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmp:CreatorTool="Macro Capture for Sony">\(body)
           </rdf:Description>
          </rdf:RDF>
         </x:xmpmeta>
