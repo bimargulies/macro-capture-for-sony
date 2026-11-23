@@ -125,7 +125,7 @@ Rotated the camera to portrait both ways while the probe saved 144 frames over 7
 
 ## Packaging results (2026-11-21)
 
-> **Spike code removed:** `spike/app/`, `spike/cli/probe.cpp` and `spike/cli/shoot.cpp` no longer exist, though this file still mentions them as history. Commit `c9c30f2` is the last one containing them (for example, `git show c9c30f2:spike/cli/probe.cpp`). Only the focus-peaking experiments remain in `spike/`.
+> **Spike code removed:** `spike/app/`, `spike/cli/probe.cpp` and `spike/cli/shoot.cpp` no longer exist, though this file still mentions them as history. Commit `c72ebaf` is the last one containing them (for example, `git show c72ebaf:spike/cli/probe.cpp`). Only the focus-peaking experiments remain in `spike/`.
 
 The real app now lives in `app/` (copied from the spike). `app/bundle.sh` builds `app/build/Macro Capture for Sony.app`; `SIGN_ID="<identity>" ./bundle.sh` signs with a real identity (default is ad hoc). Launching it with `open` connects and shows live video at 30 fps.
 
@@ -172,7 +172,7 @@ Exit criteria: smooth live view in a Swift window at acceptable latency, and a g
 
 The GitHub repo is now `bimargulies/macro-capture-for-sony` (renamed 2026-11-23; the old URL redirects). Any Mac that runs the import watcher must be on `import-sony-raw-photos` 0.8.1 or later before the updated app shoots markers. On each Mac, if not already done:
 
-1. `git remote set-url origin git@github.com:bimargulies/macro-capture-for-sony.git`, then `git pull --ff-only origin main`.
+1. `git remote set-url origin git@github.com:bimargulies/macro-capture-for-sony.git`, then `git fetch origin`. The history was rewritten on 2026-11-23 before the repo went public, so save any unpushed work, then run `git reset --hard origin/main` (a plain pull will fail).
 2. Quit VS Code and Claude Code, then `mv ~/work/capture-for-fun-and-profit ~/work/macro-capture-for-sony` and reopen the new folder.
 3. Delete `app/.build` and `spike/cli/build`, which contain absolute paths, then rebuild with `app/bundle.sh`.
 4. Claude Code keys its history and memory by folder path, so the new folder starts a fresh project.
