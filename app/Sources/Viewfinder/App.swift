@@ -405,7 +405,7 @@ struct StackCommands: Commands {
 
 @main
 struct ViewfinderApp: App {
-    static let windowTitle = "Macro Sony Capture"
+    static let windowTitle = "Macro Capture for Sony"
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     var body: some Scene {
         WindowGroup(Self.windowTitle) {

@@ -127,7 +127,7 @@ Rotated the camera to portrait both ways while the probe saved 144 frames over 7
 
 > **Spike code removed:** `spike/app/`, `spike/cli/probe.cpp` and `spike/cli/shoot.cpp` no longer exist, though this file still mentions them as history. Commit `c9c30f2` is the last one containing them (for example, `git show c9c30f2:spike/cli/probe.cpp`). Only the focus-peaking experiments remain in `spike/`.
 
-The real app now lives in `app/` (copied from the spike). `app/bundle.sh` builds `app/build/Macro Sony Capture.app`; `SIGN_ID="<identity>" ./bundle.sh` signs with a real identity (default is ad hoc). Launching it with `open` connects and shows live video at 30 fps.
+The real app now lives in `app/` (copied from the spike). `app/bundle.sh` builds `app/build/Macro Capture for Sony.app`; `SIGN_ID="<identity>" ./bundle.sh` signs with a real identity (default is ad hoc). Launching it with `open` connects and shows live video at 30 fps.
 
 Answers to the open packaging questions:
 
@@ -167,6 +167,27 @@ Exit criteria: smooth live view in a Swift window at acceptable latency, and a g
 - In-process vs. XPC helper for the SDK.
 - Overlay data from the SDK (focus frames, faces) and how it is drawn.
 - Reconnect and hot-unplug handling; threading model for SDK callbacks.
+
+## In progress: verify the app rename on the Mac with the camera
+
+The app was renamed and passes unit tests, but has not been launched or tested on the camera. Delete this section when done. On the Mac connected to the camera:
+
+1. Quit Adobe Bridge and any running copy of the app, then `git pull --ff-only origin main`.
+2. Copy this Mac's saved settings to the new bundle ID, only if it has none yet: `defaults read local.macro-capture-for-sony >/dev/null 2>&1 || defaults export local.capture.viewfinder - | defaults import local.macro-capture-for-sony -`. Skip this if `local.capture.viewfinder` does not exist. Keep the old domain.
+3. `cd app && swift test && ./bundle.sh`. The Sony SDK in `third_party/` is not in git, so it must already be on this Mac. Check that the build reports the "Capture Dev" identity.
+4. With the camera on and in manual focus, run the hardware test into a new, empty scratch folder: `app/build/Macro\ Capture\ for\ Sony.app/Contents/MacOS/Viewfinder --autotest <folder>`. It takes 3 real shots.
+5. Ask the user to `open "app/build/Macro Capture for Sony.app"`, approve any macOS or Little Snitch prompts, and confirm the window title, live view, and restored rotation, description, and window position.
+6. If all of that passes, delete the old `app/build/Macro Sony Capture.app` on this Mac, then ask the user before doing the repo rename below. Every clone needs its own `origin` update and folder move.
+
+## Planned: rename the GitHub repo and local folder
+
+The product is now "Macro Capture for Sony". The repo is still `capture-for-fun-and-profit`; the new name is `macro-capture-for-sony` (not taken as of 2026-11-23). Do these after the rename commit is pushed:
+
+1. `gh repo rename macro-capture-for-sony --repo bimargulies/capture-for-fun-and-profit` (GitHub redirects the old URL).
+2. `git remote set-url origin git@github.com:bimargulies/macro-capture-for-sony.git`, then `git fetch` to confirm.
+3. Quit VS Code and Claude Code, then `mv ~/work/capture-for-fun-and-profit ~/work/macro-capture-for-sony` and reopen the new folder.
+4. Delete `app/.build` and `spike/cli/build`, which contain absolute paths, then rebuild with `app/bundle.sh`.
+5. Claude Code keys its history and memory by folder path, so the new folder starts a fresh project.
 
 ## Later (out of scope for now)
 
