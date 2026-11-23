@@ -107,11 +107,6 @@ struct ControlsView: View {
                 Button(model.stackOpen ? "End stack" : "Begin stack") { model.toggleStack() }
                     .disabled(!connected || settings.mode != .capture)
                     .help("Writes a black marker photo into the destination folder. Press again to close the stack.")
-                if model.shotsInFlight > 0 {
-                    ProgressView().controlSize(.small)
-                    Text(model.awaitingCapture ? "waiting for the camera…" : "\(model.shotsInFlight) transferring")
-                        .foregroundColor(.secondary)
-                }
                 Spacer()
             }
 
@@ -123,19 +118,61 @@ struct ControlsView: View {
                     Text("ExifTool not found (needed to read capture times)").foregroundColor(.red)
                 }
             }
+        }
+        .padding(10)
+    }
+}
 
+/// Transfer progress, notes and errors, floating over the top right of the picture so that they never
+/// change the size of the window or move the controls. Notes fade on their own; errors stay until dismissed.
+struct StatusPopup: View {
+    @ObservedObject var model: CameraModel
+    private static let noteSeconds: UInt64 = 4
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 6) {
             if let err = model.errorMessage {
                 HStack(alignment: .top) {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.red)
                     Text(err).foregroundColor(.red).fixedSize(horizontal: false, vertical: true)
-                    Spacer()
                     Button("Dismiss") { model.errorMessage = nil }
                 }
-            } else if !model.lastMessage.isEmpty {
-                Text(model.lastMessage).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
+                .modifier(StatusPopupBackground())
+            }
+            if model.shotsInFlight > 0 {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(model.awaitingCapture ? "waiting for the camera…" : "\(model.shotsInFlight) transferring")
+                }
+                .modifier(StatusPopupBackground())
+                .allowsHitTesting(false)
+            }
+            if !model.lastMessage.isEmpty {
+                Text(model.lastMessage).lineLimit(1).truncationMode(.middle)
+                    .modifier(StatusPopupBackground())
+                    .allowsHitTesting(false)
             }
         }
+        .frame(maxWidth: 460, alignment: .trailing)
         .padding(10)
+        .animation(.easeInOut(duration: 0.15), value: model.lastMessage)
+        .animation(.easeInOut(duration: 0.15), value: model.errorMessage)
+        .animation(.easeInOut(duration: 0.15), value: model.shotsInFlight)
+        .task(id: model.lastMessage) {
+            guard !model.lastMessage.isEmpty else { return }
+            try? await Task.sleep(nanoseconds: Self.noteSeconds * 1_000_000_000)
+            if !Task.isCancelled { model.lastMessage = "" }
+        }
+    }
+}
+
+private struct StatusPopupBackground: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .font(.callout)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .shadow(radius: 3)
     }
 }
 
@@ -161,11 +198,14 @@ struct ContentView: View {
             }
             .padding(6)
             Divider()
-            if model.showViewer {
-                ViewerView(model: model, viewer: model.viewer, settings: settings)
-            } else {
-                captureTab
+            Group {
+                if model.showViewer {
+                    ViewerView(model: model, viewer: model.viewer, settings: settings)
+                } else {
+                    captureTab
+                }
             }
+            .overlay(alignment: .topTrailing) { StatusPopup(model: model) }
         }
         .background(WindowPlacementAccessor())
     }
@@ -298,14 +338,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Return (or the keypad Enter) fires the shutter on the Capture tab. In the Description field it ends the
-    /// editing instead, so typing a description cannot take a photo; the next Return then fires.
+    /// Return (or the keypad Enter) fires the shutter on the Capture tab, and on the Viewer tab in Exploring
+    /// mode. In the Description field it ends the editing instead, so typing a description cannot take a
+    /// photo; the next Return then fires.
     private func installShutterKey() {
         let returnKeyCodes: Set<UInt16> = [36, 76]
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, returnKeyCodes.contains(event.keyCode),
                   event.modifierFlags.isDisjoint(with: [.shift, .control, .option, .command]),  // ⌘↩ is the button's own shortcut
-                  !self.model.showViewer,
+                  !self.model.showViewer || self.model.settings.mode == .exploring,  // the viewer too, when exploring
                   let window = event.window, window.title == ViewfinderApp.windowTitle, window.attachedSheet == nil
             else { return event }
             if let text = window.firstResponder as? NSTextView {
@@ -400,6 +441,13 @@ struct ViewerView: View {
                 Text(viewer.selected?.url.lastPathComponent ?? "").font(.system(.callout, design: .monospaced))
                 if viewer.selected?.captured == true { Label("captured", systemImage: "checkmark.circle.fill").foregroundColor(.green) }
                 Spacer()
+                if settings.mode == .exploring {  // the same condition as the Return key on this tab
+                    Button("Shutter") { model.shoot() }
+                        .keyboardShortcut(.return, modifiers: .command)
+                        .disabled(model.state != .connected || model.awaitingCapture)
+                        .help("Full press (Return or ⌘↩). Presses half-way first.")
+                    Divider().frame(height: 16)
+                }
                 Button { viewer.zoomer.zoomOut() } label: { Image(systemName: "minus.magnifyingglass") }
                     .keyboardShortcut("-", modifiers: .command).help("Zoom out (⌘-)")
                 Button { viewer.zoomer.zoomIn() } label: { Image(systemName: "plus.magnifyingglass") }
@@ -424,18 +472,6 @@ struct ViewerView: View {
                 }
             }
             .padding(.horizontal, 10).padding(.bottom, 6)
-            if let err = model.errorMessage {
-                HStack(alignment: .top) {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.red)
-                    Text(err).foregroundColor(.red).fixedSize(horizontal: false, vertical: true)
-                    Spacer()
-                    Button("Dismiss") { model.errorMessage = nil }
-                }
-                .padding(.horizontal, 10).padding(.bottom, 6)
-            } else if !model.lastMessage.isEmpty {
-                Text(model.lastMessage).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
-                    .padding(.horizontal, 10).padding(.bottom, 6)
-            }
             Carousel(viewer: viewer)
         }
         .background(Color.black)
