@@ -168,15 +168,14 @@ Exit criteria: smooth live view in a Swift window at acceptable latency, and a g
 - Overlay data from the SDK (focus frames, faces) and how it is drawn.
 - Reconnect and hot-unplug handling; threading model for SDK callbacks.
 
-## Planned: rename the GitHub repo and local folder
+## In progress: finish the repo rename on each Mac
 
-The product is now "Macro Capture for Sony". The repo is still `capture-for-fun-and-profit`; the new name is `macro-capture-for-sony` (not taken as of 2026-11-23). Do these after the rename commit is pushed:
+The GitHub repo is now `bimargulies/macro-capture-for-sony` (renamed 2026-11-23; the old URL redirects). Any Mac that runs the import watcher must be on `import-sony-raw-photos` 0.8.1 or later before the updated app shoots markers. On each Mac, if not already done:
 
-1. `gh repo rename macro-capture-for-sony --repo bimargulies/capture-for-fun-and-profit` (GitHub redirects the old URL).
-2. `git remote set-url origin git@github.com:bimargulies/macro-capture-for-sony.git`, then `git fetch` to confirm.
-3. Quit VS Code and Claude Code, then `mv ~/work/capture-for-fun-and-profit ~/work/macro-capture-for-sony` and reopen the new folder.
-4. Delete `app/.build` and `spike/cli/build`, which contain absolute paths, then rebuild with `app/bundle.sh`.
-5. Claude Code keys its history and memory by folder path, so the new folder starts a fresh project.
+1. `git remote set-url origin git@github.com:bimargulies/macro-capture-for-sony.git`, then `git pull --ff-only origin main`.
+2. Quit VS Code and Claude Code, then `mv ~/work/capture-for-fun-and-profit ~/work/macro-capture-for-sony` and reopen the new folder.
+3. Delete `app/.build` and `spike/cli/build`, which contain absolute paths, then rebuild with `app/bundle.sh`.
+4. Claude Code keys its history and memory by folder path, so the new folder starts a fresh project.
 
 ## Later (out of scope for now)
 
