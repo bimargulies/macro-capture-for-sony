@@ -464,6 +464,8 @@ Offline experiment on a real A7R V photo (the ARW's embedded 8448x6336 JPEG), si
 
 The "MM -0.7" meter value the camera shows is not available: the SDK's `MeteredManualLevel` property is absent from the A7R V's 233 properties, and the Sony app never displays any meter info either. The app does not try to show it (code removed). Bottom line: shutter, aperture, ISO, compensation.
 
+Retested 2026-11-24 for Sony support with `spike/cli/meterprobe` (read-only; build with CMake in `spike/cli`): in M with fixed shutter, aperture and ISO (ISO Auto off), with both a manual lens and an electronic lens (F2.0 reported), the camera on software 2.00 still did not return it. Asking for it alone gives `0x8402 Api_InvalidCalled`, and it is absent from all 233 properties. Waiting on Sony's answer.
+
 ## SDK updates
 
 Sony publishes a dated "Notifications" list on https://support.d-imaging.sony.co.jp/app/sdk/en/index.html (no mailing list or feed that we found; check it by hand). As of 2026-11-21 the newest release is v2.02.00 (2026-06-10), the one we use; its only change is ILCE-7RM6 support. The last release with an A7R V item was v1.13.00 (2024-10-16). The page says the camera needs the latest system software.

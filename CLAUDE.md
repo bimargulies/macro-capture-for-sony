@@ -6,7 +6,7 @@ A macOS replacement for Sony's Imaging Edge, controlling the user's Sony A7R V (
 
 - GUI in Swift (SwiftUI/AppKit, Metal later if needed). SDK wrapped by an Objective-C++ shim.
 - Still images only; live view is a JPEG poll loop.
-- Phase 1 spike is done (see PLAN.md): live view 30 fps, auto-reconnect, manual rotate needed. `spike/` now holds only the focus-peaking experiments (`cli/focusprobe.cpp`, `peaking/peaksim.swift`); the rest of the spike code is in git history at `c72ebaf`.
+- Phase 1 spike is done (see PLAN.md): live view 30 fps, auto-reconnect, manual rotate needed. `spike/` now holds only the focus-peaking experiments (`cli/focusprobe.cpp`, `peaking/peaksim.swift`) and the read-only meter probe (`cli/meterprobe.cpp`, for a Sony support question); the rest of the spike code is in git history at `c72ebaf`.
 - The real app is in `app/` (SwiftPM, Swift + Objective-C++ shim). Build the bundle with `app/bundle.sh`; run `open "app/build/Macro Capture for Sony.app"`.
 - Gotchas: never call the SDK's `Init()` twice in one process (crashes); always disconnect before exit; quit Adobe Bridge before running.
 - Sony SDK lives in `third_party/` (gitignored, license-restricted); never commit it.
