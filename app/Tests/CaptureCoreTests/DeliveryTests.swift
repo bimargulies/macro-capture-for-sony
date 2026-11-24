@@ -25,6 +25,44 @@ final class DeliveryTests: XCTestCase {
         try MarkerARW.make(at: t).write(to: url)
         return url
     }
+    /// A stand-in for what the camera sends when set to transfer JPEG: JPEG bytes, under any name.
+    private func stagedJPEG(_ name: String) throws -> URL {
+        let url = staging.appendingPathComponent(name)
+        try Data([0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x10] + Array(repeating: 0, count: 64)).write(to: url)
+        return url
+    }
+
+    func testAJpegIsRefusedInEveryModeAndKeptInStaging() async throws {
+        for (name, mode) in [("SHOT02829.JPG", CaptureMode.capture), ("SHOT02830.ARW", .capture), ("SHOT02831.JPG", .exploring)] {
+            let src = try stagedJPEG(name)
+            do {
+                _ = try await pipeline.deliver(staged: src, context: ShotContext(mode: mode, destination: dest, description: "x"))
+                XCTFail("\(name) in \(mode) mode should have been refused")
+            } catch let e as DeliveryError {
+                guard case .notRaw(let file, let kind) = e else { return XCTFail("wrong error: \(e)") }
+                XCTAssertEqual(file, name)
+                XCTAssertEqual(kind, "a JPEG")
+                XCTAssertTrue("\(e)".contains("PC Remote"), "the message should say which setting to check")
+            }
+            XCTAssertTrue(FileManager.default.fileExists(atPath: src.path), "the refused file must stay in staging")
+        }
+        XCTAssertEqual(try names(dest), [], "nothing, not even a sidecar, may reach the destination")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: exploring.path), "nothing may reach the exploring folder")
+    }
+
+    func testNonRawKindRecognizesTheCommonCases() throws {
+        let arw = try stagedPhoto()
+        XCTAssertNil(nonRawKind(of: arw))
+        XCTAssertEqual(nonRawKind(of: try stagedJPEG("a.JPG")), "a JPEG")
+        let heif = staging.appendingPathComponent("b.HIF")
+        try Data([0, 0, 0, 0x18] + Array("ftypheic".utf8) + Array(repeating: 0, count: 16)).write(to: heif)
+        XCTAssertEqual(nonRawKind(of: heif), "a HEIF image")
+        let empty = staging.appendingPathComponent("c.ARW")
+        try Data().write(to: empty)
+        XCTAssertEqual(nonRawKind(of: empty), "not a recognized image")
+        XCTAssertEqual(nonRawKind(of: staging.appendingPathComponent("missing.ARW")), "a file that could not be read")
+    }
+
     private func names(_ dir: URL) throws -> [String] {
         try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted()
     }

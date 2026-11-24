@@ -573,14 +573,31 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
                     self.drainMarkers()
                     self.retryFailed()
                 }
-            } catch {
-                await MainActor.run {
-                    self.deliveriesInFlight -= 1
-                    self.failed.append((staged, ctx))
-                    self.errorMessage = "\(error) The photo is kept in \(AppFolders.staging.path) and will be retried."
-                    self.drainMarkers()
+            } catch let error as DeliveryError {
+                if case .notRaw = error {
+                    // Retrying would fail the same way, so the file is left in staging and not retried.
+                    await MainActor.run {
+                        self.deliveriesInFlight -= 1
+                        self.stagedStore.forget(staged)
+                        self.errorMessage = "\(error) The file was left in \(AppFolders.staging.path)."
+                        self.drainMarkers()
+                    }
+                    return
                 }
+                await recordFailure(error, staged, ctx)
+            } catch {
+                await recordFailure(error, staged, ctx)
             }
+    }
+
+    /// A delivery that failed for a reason that may pass (e.g. the destination drive was not mounted): retry later.
+    private func recordFailure(_ error: Error, _ staged: URL, _ ctx: ShotContext) async {
+        await MainActor.run {
+            self.deliveriesInFlight -= 1
+            self.failed.append((staged, ctx))
+            self.errorMessage = "\(error) The photo is kept in \(AppFolders.staging.path) and will be retried."
+            self.drainMarkers()
+        }
     }
 
     /// Retry photos whose delivery failed (e.g. the destination drive was not mounted).

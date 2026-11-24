@@ -35,14 +35,32 @@ public enum DeliveryError: Error, CustomStringConvertible {
     case noDestination
     case destinationUnavailable(URL)
     case io(String)
+    /// The camera sent something other than a raw file (for example a JPEG, when the camera's PC Remote
+    /// settings transfer JPEG or a reduced size). Retrying cannot help, so it is not retried.
+    case notRaw(file: String, kind: String)
 
     public var description: String {
         switch self {
         case .noDestination: return "No destination folder is set. Choose one in Settings."
         case .destinationUnavailable(let u): return "The destination folder is not available: \(u.path)"
         case .io(let m): return m
+        case .notRaw(let file, let kind):
+            return "The camera sent \(file), \(kind), not a raw ARW file, so it was not saved. "
+                + "Check the camera's PC Remote settings: it should transfer RAW at the original size."
         }
     }
+}
+
+/// Recognizes a raw ARW by its content, not its name: an ARW is a TIFF file, so it starts with the
+/// little-endian TIFF header "II*\0". Returns nil for an ARW, else a short description of what the file is.
+func nonRawKind(of file: URL) -> String? {
+    guard let handle = try? FileHandle(forReadingFrom: file) else { return "a file that could not be read" }
+    defer { try? handle.close() }
+    let head = [UInt8]((try? handle.read(upToCount: 12)) ?? Data())
+    if head.starts(with: [0x49, 0x49, 0x2A, 0x00]) { return nil }
+    if head.starts(with: [0xFF, 0xD8, 0xFF]) { return "a JPEG" }
+    if head.count >= 12, Array(head[4..<8]) == Array("ftyp".utf8) { return "a HEIF image" }
+    return "not a recognized image"
 }
 
 /// Moves files from the camera's staging folder to their final place.
@@ -71,7 +89,11 @@ public actor DeliveryPipeline {
     }
 
     /// Delivers one downloaded photo according to the context captured at the shutter press.
+    /// A file that is not a raw ARW is refused with `DeliveryError.notRaw` and left in staging.
     public func deliver(staged: URL, context: ShotContext) async throws -> DeliveryResult {
+        if let kind = nonRawKind(of: staged) {
+            throw DeliveryError.notRaw(file: staged.lastPathComponent, kind: kind)
+        }
         let cameraTime = try? await exiftool?.captureTime(of: staged)
         switch context.mode {
         case .exploring:
@@ -157,7 +179,9 @@ public actor DeliveryPipeline {
             do { try writeAtomically(data, to: url); return nil }
             catch { last = error; if attempt < 2 { try? await Task.sleep(nanoseconds: 500_000_000) } }
         }
-        return "\(url.deletingPathExtension().lastPathComponent).ARW was delivered but its sidecar could not be written (\(last?.localizedDescription ?? "unknown error")). The importer will wait for it."
+        let photo = url.deletingPathExtension().lastPathComponent
+        let reason = last?.localizedDescription ?? "unknown error"
+        return "\(photo).ARW was delivered but its sidecar could not be written (\(reason)). The importer will wait for it."
     }
 
     /// Writes `data` to a hidden temporary file in the same folder, then renames it into place.
