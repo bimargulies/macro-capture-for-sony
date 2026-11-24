@@ -56,7 +56,7 @@ final class MarkerARWTests: XCTestCase {
     func testStripDataEndsInsideTheFile() async throws {
         // The importer treats a file whose strips run past its end as "still being written".
         let url = try writeMarker(NaiveTime(seconds: 1_800_000_000))
-        let size = try FileManager.default.attributesOfItem(atPath: url.path)[.size] as! Int
+        let size = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int)
         let out = try await exiftool.run(["-s3", "-n", "-a", "-StripOffsets", "-StripByteCounts", url.path])
         let nums = out.split(whereSeparator: \.isNewline).compactMap { Int($0) }
         XCTAssertEqual(nums.count, 2)
