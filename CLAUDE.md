@@ -11,6 +11,8 @@ A macOS replacement for Sony's Imaging Edge, controlling the user's Sony A7R V (
 - Gotchas: never call the SDK's `Init()` twice in one process (crashes); always disconnect before exit; quit Adobe Bridge before running.
 - Sony SDK lives in `third_party/` (gitignored, license-restricted); never commit it.
 - Idea to try someday: wired Ethernet through a hub instead of USB. The SDK's compatibility table (v2.02.00) lists the A7R V for USB and wireless only, but the user has run this camera on wired Ethernet with Sony's app, so it may work. Untested with our app. To test: unplug USB, turn off SSH authentication on the camera (the shim passes no SSH credentials yet), and launch with `CAM_SERIAL` unset so enumeration finds it.
+  - 2026-11-27 attempts. Wired LAN: the camera never got an IP address (no DHCP lease, and a manual 192.168.0.240 did not show either). Wi-Fi: with PC Remote's connection method set to Wi-Fi Access Point, the SDK found the camera by IP (it opened ports 15740 and 64321, reported pairing Necessary and SSH off), but Connect failed with `Connect_FailRejected`, which the SDK docs call a pairing error. Never connected.
+  - Pairing, per the SDK's environment_setup docs: on the camera, open Network > PC Remote Function > Pairing, then call Connect from the Mac while that screen is up, choose OK on the camera, then turn the camera off for about 10 seconds (it saves the pairing only at power-off). Untried: the next attempt should start here. Enumeration over the network can come back empty at first; retry it.
 
 See [PLAN.md](PLAN.md) for the plan, open items, and the full background and rationale.
 
