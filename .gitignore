@@ -12,3 +12,6 @@ build/
 spike/**/frames/
 *.jpg
 .build/
+
+# Local, private settings (camera serial)
+*.local.env

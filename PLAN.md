@@ -84,7 +84,7 @@ Method: `./run.sh --clock` shows a millisecond clock over the viewfinder; the A7
 
 - `EnumCameraObjects` takes **7-8 s** (the `timeInSec` argument of 3 is not what bounds it). `Connect` itself takes about 40 ms, plus the sample's 1 s settle sleep. While enumerating, the process opens UDP sockets (one on `*:65040`): that is network discovery for IP cameras, and it is what triggers the macOS "incoming connection" firewall prompt.
 - **Fast path:** `CreateCameraObjectInfoUSBConnection(model, serial)` skips enumeration. Startup drops from about 9.4 s to **1.2 s to first frame** (1.0 s of that is the settle sleep, which may be shortenable), with no network sockets. Frame rate and latency are unchanged (30 fps, 6.9 ms fetch-to-screen).
-- It needs the camera's model enum and USB serial (`<camera-serial>` for this body; the shim logs it as "camera id" after an enumeration). Plan: look up the serial of a connected Sony USB device directly (IOKit), or cache it from the last successful enumeration, and only fall back to full enumeration (which also supports Wi-Fi/Ethernet cameras) when that fails.
+- It needs the camera's model enum and USB serial (this body's is in the gitignored `camera.local.env` at the repo root; the shim logs it as "camera id" after an enumeration). Plan: look up the serial of a connected Sony USB device directly (IOKit), or cache it from the last successful enumeration, and only fall back to full enumeration (which also supports Wi-Fi/Ethernet cameras) when that fails.
 - Spike hook: env `CAM_SERIAL=<serial>` selects the fast path (model hard-coded to ILCE-7RM5).
 - Not done: the object from `CreateCameraObjectInfoUSBConnection` is never `Release()`d (spike leak).
 
