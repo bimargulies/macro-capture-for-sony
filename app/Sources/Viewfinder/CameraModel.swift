@@ -33,6 +33,8 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
     /// A shutter press has been sent but the camera has not yet reported taking the photo.
     @Published var awaitingCapture = false
     @Published var stackOpen = false
+    /// Photos delivered between the current (or last) stack's opening and closing markers; nil before the first stack.
+    @Published var stackCount: Int?
     @Published var lastMessage = ""
     @Published var errorMessage: String?
     @Published var lastDelivered: URL?
@@ -68,6 +70,8 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
     /// `forced` comes from the Stack menu: it repairs a stack the app no longer knows about, so it leaves `stackOpen` alone.
     private enum MarkerRequest: String { case opening, closing, forced }
     private var markerQueue: [MarkerRequest] = []
+    /// True from the opening marker's write to the closing marker's, the span the importer puts in the stack.
+    private var countingStack = false
     /// Photos on this Mac still being copied to their destination.
     private var deliveriesInFlight = 0
     /// True until the photos left in staging by a previous run have been delivered.
@@ -437,6 +441,7 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
             return
         }
         markerQueue.append(stackOpen ? .closing : .opening)
+        if !stackOpen { stackCount = 0 }
         stackOpen.toggle()
         retryFailed()
         drainMarkers()
@@ -475,11 +480,17 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
                 let url = try await self.pipeline.deliverMarker(at: t, into: dir)
                 await MainActor.run {
                     self.lastMessage = "Wrote \(request.rawValue) marker \(url.lastPathComponent)"
+                    switch request {
+                    case .opening: self.countingStack = true
+                    case .closing: self.countingStack = false
+                    case .forced: break
+                    }
                     self.drainMarkers()
                 }
             } catch {
                 await MainActor.run {
                     if request != .forced { self.stackOpen = request == .closing }  // it did not happen
+                    if request == .opening { self.stackCount = nil }
                     self.lastCameraTime = self.settings.lastCameraTime  // the time slot was not used
                     self.errorMessage = "\(error)"
                     self.drainMarkers()
@@ -567,6 +578,7 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
                     }
                     if let warning = result.warning { self.errorMessage = warning }
                     self.lastDelivered = result.url
+                    if self.countingStack && result.mode == .capture { self.stackCount = (self.stackCount ?? 0) + 1 }
                     if result.mode == .exploring { self.viewer.reload(selecting: result.url.lastPathComponent) }
                     if showInViewer && !self.halfPressed { self.showViewer = true }
                     self.lastMessage = (result.mode == .capture ? "Saved " : "Explored ") + result.url.lastPathComponent

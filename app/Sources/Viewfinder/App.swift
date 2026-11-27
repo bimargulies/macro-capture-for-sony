@@ -107,6 +107,13 @@ struct ControlsView: View {
                 Button(model.stackOpen ? "End stack" : "Begin stack") { model.toggleStack() }
                     .disabled(!connected || settings.mode != .capture)
                     .help("Writes a black marker photo into the destination folder. Press again to close the stack.")
+                if let count = model.stackCount {
+                    let photos = "\(count) photo" + (count == 1 ? "" : "s")
+                    Text(model.stackOpen ? photos : "Last stack: \(photos)")
+                        .monospacedDigit()
+                        .foregroundColor(model.stackOpen ? .green : .secondary)
+                        .help("Photos delivered into the stack, between its opening and closing markers.")
+                }
                 Spacer()
             }
 
@@ -225,6 +232,12 @@ struct ContentView: View {
                                 Text(model.status).font(.callout).foregroundColor(.gray)
                             }
                         }
+                    }
+                }
+                .overlay {
+                    // A green frame around the live view while a stack is open, so it is hard to forget.
+                    if model.stackOpen {
+                        Rectangle().strokeBorder(Color.green, lineWidth: 4).allowsHitTesting(false)
                     }
                 }
             Divider()
