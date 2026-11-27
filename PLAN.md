@@ -460,11 +460,13 @@ Offline experiment on a real A7R V photo (the ARW's embedded 8448x6336 JPEG), si
 - Caveat: a promoted photo keeps its original camera time. If a stack is open when you capture an older exploring photo, the importer (which sorts by capture time) will not place it inside that stack.
 - `--viewer` launch argument opens on the Viewer tab (for screenshots).
 
-## Meter reading (decided 2026-11-21)
+## Meter reading (decided 2026-11-21, reversed 2026-11-27)
 
 The "MM -0.7" meter value the camera shows is not available: the SDK's `MeteredManualLevel` property is absent from the A7R V's 233 properties, and the Sony app never displays any meter info either. The app does not try to show it (code removed). Bottom line: shutter, aperture, ISO, compensation.
 
 Retested 2026-11-24 for Sony support with `spike/cli/meterprobe` (read-only; build with CMake in `spike/cli`): in M with fixed shutter, aperture and ISO (ISO Auto off), with both a manual lens and an electronic lens (F2.0 reported), the camera on software 2.00 still did not return it. Asking for it alone gives `0x8402 Api_InvalidCalled`, and it is absent from all 233 properties. Waiting on Sony's answer.
+
+**Works on camera software 4.00 (tested 2026-11-27).** Same probe, M at 0.4", F20, ISO 200: `MeteredManualLevel` (0x799) is returned when asked for alone and is in the full list, which now has 431 properties. It is an Int16 range, getEnable 1, with a change notification. The value is the meter reading × 1000, so raw 0xF830 = −2000 = −2.0 EV. The app shows it on the exposure line as "MM -2.0", after ISO, and leaves it out while the camera says the value cannot be read. The probe was built with plain clang++ because CMake is not installed: `clang++ -std=c++17 -arch arm64 -mmacosx-version-min=12.1 -I$SDK/app/CRSDK -I$SDK/app meterprobe.cpp $SDK/app/CrDebugString.cpp -Lbuild -lCr_Core -Wl,-rpath,@executable_path -o build/meterprobe`, where `$SDK` is the SimpleCli folder. Copy the SDK's `external/crsdk` libraries into `build/` and its `CrAdapter` folder into `build/Contents/Frameworks/CrAdapter` first.
 
 ## SDK updates
 

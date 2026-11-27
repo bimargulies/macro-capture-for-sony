@@ -551,6 +551,7 @@ const unsigned CameraBridgePropShutterSpeed = SCRSDK::CrDeviceProperty_ShutterSp
 const unsigned CameraBridgePropISO = SCRSDK::CrDeviceProperty_IsoSensitivity;
 const unsigned CameraBridgePropExposureBias = SCRSDK::CrDeviceProperty_ExposureBiasCompensation;
 const unsigned CameraBridgePropExposureProgram = SCRSDK::CrDeviceProperty_ExposureProgramMode;
+const unsigned CameraBridgePropMeteredManual = SCRSDK::CrDeviceProperty_MeteredManualLevel;
 
 - (NSDictionary<NSNumber *, NSNumber *> *)readExposure {
     NSMutableDictionary *out = [NSMutableDictionary dictionary];
@@ -559,12 +560,16 @@ const unsigned CameraBridgePropExposureProgram = SCRSDK::CrDeviceProperty_Exposu
         return out;
     }
     CrInt32u codes[] = {CameraBridgePropFNumber, CameraBridgePropShutterSpeed, CameraBridgePropISO,
-                        CameraBridgePropExposureBias, CameraBridgePropExposureProgram};
+                        CameraBridgePropExposureBias, CameraBridgePropExposureProgram, CameraBridgePropMeteredManual};
     CrInt32 n = 0;
     SCRSDK::CrDeviceProperty *list = nullptr;
     SCRSDK::CrError err = SCRSDK::GetSelectDeviceProperties(_dev, static_cast<CrInt32>(std::size(codes)), codes, &list, &n);
     if (!err && list) {
         for (CrInt32 i = 0; i < n; i++) {
+            // The meter value means something only while the camera says it can be read (camera software 4.00 on).
+            if (list[i].GetCode() == CameraBridgePropMeteredManual && !list[i].IsGetEnableCurrentValue()) {
+                continue;
+            }
             out[@(list[i].GetCode())] = @(list[i].GetCurrentValue());
         }
     }

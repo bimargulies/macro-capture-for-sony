@@ -32,7 +32,7 @@ public enum ExposureText {
         return value == 0x00FFFFFF ? "ISO Auto" : "ISO \(value)"
     }
 
-    /// Signed EV in thousandths (exposure compensation): "+0.7", "-1.3", "0.0".
+    /// Signed EV in thousandths (exposure compensation, metered-manual level): "+0.7", "-1.3", "0.0".
     public static func ev(_ v: UInt64) -> String {
         let t = Double(Int16(truncatingIfNeeded: v)) / 1000
         if abs(t) < 0.05 { return "0.0" }

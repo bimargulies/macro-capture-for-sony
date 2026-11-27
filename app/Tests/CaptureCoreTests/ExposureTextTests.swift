@@ -29,5 +29,6 @@ final class ExposureTextTests: XCTestCase {
         XCTAssertEqual(ExposureText.ev(700), "+0.7")
         XCTAssertEqual(ExposureText.ev(UInt64(UInt16(bitPattern: -1300))), "-1.3")
         XCTAssertEqual(ExposureText.ev(0), "0.0")
+        XCTAssertEqual(ExposureText.ev(0xFFFF_FFFF_FFFF_F830), "-2.0")   // a real MeteredManualLevel read, camera software 4.00
     }
 }
