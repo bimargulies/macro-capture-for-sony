@@ -15,6 +15,9 @@ final class AppSettings: ObservableObject {
     /// Display rotation of the viewfinder in clockwise quarter turns (0...3). Remembered.
     @Published var rotation: Int { didSet { defaults.set(rotation, forKey: "rotation") } }
 
+    /// Shows a 4x5 crop frame on the live view. Remembered.
+    @Published var showCropGuide: Bool { didSet { defaults.set(showCropGuide, forKey: "showCropGuide") } }
+
     /// Shows the live view's frame rate, latency, decode time and dropped frames at the bottom right. Off by default;
     /// the numbers are always measured, so turning it on needs no restart.
     @Published var showLiveViewStats: Bool { didSet { defaults.set(showLiveViewStats, forKey: "showLiveViewStats") } }
@@ -27,6 +30,7 @@ final class AppSettings: ObservableObject {
         photoDescription = defaults.string(forKey: "photoDescription") ?? ""
         rotation = ((defaults.integer(forKey: "rotation") % 4) + 4) % 4
         showLiveViewStats = defaults.bool(forKey: "showLiveViewStats")
+        showCropGuide = defaults.bool(forKey: "showCropGuide")
     }
 
     var destinationURL: URL? {

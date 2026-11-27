@@ -5,10 +5,12 @@ import SwiftUI
 struct FrameViewRepresentable: NSViewRepresentable {
     let view: FrameView
     let quarterTurns: Int
+    var cropGuide = false
     let hidden: Bool
     func makeNSView(context: Context) -> FrameView { view }
     func updateNSView(_ nsView: FrameView, context: Context) {
         nsView.quarterTurns = quarterTurns
+        nsView.showCropGuide = cropGuide
         nsView.isHidden = hidden   // hidden views also drop their cursor rects
     }
 }
@@ -90,6 +92,9 @@ struct ControlsView: View {
                 Button { settings.rotation = (settings.rotation + 1) % 4 } label: { Image(systemName: "rotate.right") }
                     .keyboardShortcut("]", modifiers: .command)
                     .help("Rotate the viewfinder image clockwise (⌘]). Display only.")
+                Toggle("4×5", isOn: $settings.showCropGuide)
+                    .toggleStyle(.button)
+                    .help("Show an orange 4×5 crop frame on the live view. It turns with the rotation: landscape, or portrait when rotated a quarter turn.")
                 Text("Magnifier").foregroundColor(.secondary)
                 Picker("Magnifier", selection: Binding(get: { model.magnifierRatio },
                                                        set: { model.setMagnifier(ratio: $0) })) {
@@ -219,7 +224,8 @@ struct ContentView: View {
 
     private var captureTab: some View {
         VStack(spacing: 0) {
-            FrameViewRepresentable(view: model.frameView, quarterTurns: settings.rotation, hidden: false)
+            FrameViewRepresentable(view: model.frameView, quarterTurns: settings.rotation,
+                                   cropGuide: settings.showCropGuide, hidden: false)
                 .frame(minWidth: 360, minHeight: 360)
                 .overlay(alignment: .topLeading) { if showClock { ClockOverlay() } }
                 .overlay {

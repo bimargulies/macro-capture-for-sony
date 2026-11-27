@@ -62,6 +62,13 @@ final class FrameView: NSView {
 
     private let hoverLayer = CAShapeLayer()
     private let placedLayer = CAShapeLayer()
+    private let cropLayer = CAShapeLayer()
+
+    /// Shows the largest centred 4x5 frame. It is laid out on the unrotated picture, so it turns with it:
+    /// landscape (5 wide, 4 high) at 0 and 180 degrees, portrait at 90 and 270. Hidden while magnified.
+    var showCropGuide = false {
+        didSet { if showCropGuide != oldValue { updateMarkers() } }
+    }
 
     private func setUpMarkers() {
         for (l, c) in [(placedLayer, NSColor.systemGray), (hoverLayer, NSColor.orange)] {
@@ -72,6 +79,11 @@ final class FrameView: NSView {
             l.zPosition = 10
             layer?.addSublayer(l)
         }
+        cropLayer.fillColor = nil
+        cropLayer.strokeColor = NSColor.orange.cgColor
+        cropLayer.lineWidth = 1.5
+        cropLayer.zPosition = 9
+        layer?.addSublayer(cropLayer)
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
     }
 
@@ -137,11 +149,29 @@ final class FrameView: NSView {
         return path
     }
 
+    /// The largest centred rectangle with sides 5:4 (long side along the picture's long side), in view points.
+    private func cropPath() -> CGPath {
+        let long: CGFloat = 5, short: CGFloat = 4
+        let landscape = imageSize.width >= imageSize.height
+        let aspect = landscape ? long / short : short / long   // width / height in picture pixels
+        var w = imageSize.width, h = w / aspect
+        if h > imageSize.height { h = imageSize.height; w = h * aspect }
+        let fx = w / imageSize.width / 2, fy = h / imageSize.height / 2
+        let corners = [CGPoint(x: 0.5 - fx, y: 0.5 - fy), CGPoint(x: 0.5 + fx, y: 0.5 - fy),
+                       CGPoint(x: 0.5 + fx, y: 0.5 + fy), CGPoint(x: 0.5 - fx, y: 0.5 + fy)].map(viewPoint)
+        let path = CGMutablePath()
+        path.addLines(between: corners)
+        path.closeSubpath()
+        return path
+    }
+
     private func updateMarkers() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         placedLayer.frame = bounds
         hoverLayer.frame = bounds
+        cropLayer.frame = bounds
+        cropLayer.path = showCropGuide && !magnified ? cropPath() : nil
         if magnified { placedLayer.path = nil; hoverLayer.path = nil }
         else {
             placedLayer.path = placed.map { cornerPath(around: viewPoint($0)) }
@@ -216,7 +246,9 @@ final class FrameView: NSView {
 
     /// Remember the full (un-magnified) picture's shape for click mapping.
     private func lastFullSize(_ img: CGImage) {
-        if !magnified { imageSize = CGSize(width: img.width, height: img.height) }
+        guard !magnified else { return }
+        let size = CGSize(width: img.width, height: img.height)
+        if size != imageSize { imageSize = size; updateMarkers() }
     }
 
     private func drain() {
