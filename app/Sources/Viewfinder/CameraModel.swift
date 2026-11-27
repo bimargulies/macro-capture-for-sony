@@ -347,7 +347,11 @@ final class CameraModel: NSObject, ObservableObject, CameraBridgeDelegate {
         if let v = val(CameraBridgePropShutterSpeed), let t = ExposureText.shutter(v) { parts.append(t) }
         if let v = val(CameraBridgePropFNumber), let t = ExposureText.aperture(v) { parts.append(t) }
         if let v = val(CameraBridgePropISO), let t = ExposureText.iso(v) { parts.append(t) }
-        if let v = val(CameraBridgePropMeteredManual) { parts.append("MM " + ExposureText.ev(v)) }
+        // Only in M, where the camera shows it too. 1 = CrExposure_M_Manual.
+        if val(CameraBridgePropExposureProgram) == 1, let v = val(CameraBridgePropMeteredManual) {
+            let ev = ExposureText.ev(v)
+            parts.append("MM " + (ev == "0.0" ? "±0.0" : ev))
+        }
         if let v = val(CameraBridgePropExposureBias) { parts.append("comp " + ExposureText.ev(v)) }
         return parts.joined(separator: "   ")
     }
